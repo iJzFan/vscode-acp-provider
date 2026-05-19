@@ -2,13 +2,13 @@
   "name": "vscode-acp-client",
   "displayName": "VS Code ACP Client",
   "description": "Chat sessions backed by Agent Client Protocol (ACP) agents and CLIs",
-  "version": "0.1.0",
+  "version": "0.4.12",
   "publisher": "org-gap",
   "repository": {
     "url": "https://github.com/gayanper/vscode-acp-provider.git"
   },
   "engines": {
-    "vscode": "^1.110.0"
+    "vscode": "^1.120.0"
   },
   "type": "commonjs",
   "categories": [
@@ -33,46 +33,11 @@
   "main": "./out/extension.js",
   "enabledApiProposals": [
     "chatSessionsProvider",
-    "chatParticipantPrivate",
-    "chatParticipantAdditions",
     "chatProvider",
-    "defaultChatParticipant"
+    "chatParticipantPrivate",
+    "chatParticipantAdditions"
   ],
   "contributes": {
-    "languageModelChatProviders": [
-      {
-        "vendor": "acp-opencode",
-        "displayName": "OpenCode [ACP]"
-      },
-      {
-        "vendor": "acp-codex",
-        "displayName": "Codex [ACP]"
-      },
-      {
-        "vendor": "acp-cagent",
-        "displayName": "Cagent [ACP]"
-      },
-      {
-        "vendor": "acp-geminicli",
-        "displayName": "Gemini [ACP]"
-      },
-      {
-        "vendor": "acp-claude",
-        "displayName": "Claude Code [ACP]"
-      },
-      {
-        "vendor": "acp-vibe",
-        "displayName": "Mistral Vibe [ACP]"
-      },
-      {
-        "vendor": "acp-copilot",
-        "displayName": "Copilot [ACP]"
-      },
-      {
-        "vendor": "acp-default",
-        "when": "!github.copilot-chat.activated"
-      }
-    ],
     "chatSessions": [
       {
         "name": "opencode",
@@ -165,6 +130,24 @@
         }
       },
       {
+        "name": "auggie",
+        "type": "acp-auggie",
+        "canDelegate": true,
+        "displayName": "Auggie [ACP]",
+        "description": "Chat sessions backed by the Auggie CLI ACP agent",
+        "commands": [
+          {
+            "name": "?",
+            "description": "List available ACP commands"
+          }
+        ],
+        "icon": "$(hubot)",
+        "when": "config.acpClient.agents.auggie.enabled",
+        "capabilities": {
+          "supportsFileAttachments": true
+        }
+      },
+      {
         "name": "vibe",
         "type": "acp-vibe",
         "canDelegate": true,
@@ -206,17 +189,6 @@
       "properties": {
         "acpClient.agents": {
           "type": "object",
-          "propertyNames": {
-            "enum": [
-              "opencode",
-              "codex",
-              "cagent",
-              "geminicli",
-              "claude",
-              "vibe",
-              "copilot"
-            ]
-          },
           "additionalProperties": {
             "type": "object",
             "required": [
@@ -251,75 +223,133 @@
               },
               "mcpServers": {
                 "type": "array",
-                "description": "Optional list of MCP servers this agent should connect to when sessions start",
+                "description": "Optional list of ACP-local MCP servers this agent should connect to when sessions start",
                 "items": {
-                  "type": "object",
-                  "required": [
-                    "type",
-                    "name",
-                    "command"
-                  ],
-                  "properties": {
-                    "type": {
-                      "const": "stdio",
-                      "description": "Connect to an MCP server over stdio"
-                    },
-                    "name": {
-                      "type": "string",
-                      "description": "Display name for the MCP server"
-                    },
-                    "command": {
-                      "type": "string",
-                      "description": "Executable that launches the MCP server"
-                    },
-                    "args": {
-                      "type": "array",
-                      "items": {
-                        "type": "string"
-                      },
-                      "description": "Arguments passed to the MCP server executable"
-                    },
-                    "env": {
+                  "oneOf": [
+                    {
                       "type": "object",
-                      "additionalProperties": {
-                        "type": "string"
-                      },
-                      "description": "Environment variables applied when starting the MCP server"
+                      "required": [
+                        "type",
+                        "name",
+                        "command"
+                      ],
+                      "properties": {
+                        "type": {
+                          "const": "stdio",
+                          "description": "Connect to an MCP server over stdio"
+                        },
+                        "name": {
+                          "type": "string",
+                          "description": "Display name for the MCP server"
+                        },
+                        "command": {
+                          "type": "string",
+                          "description": "Executable that launches the MCP server"
+                        },
+                        "args": {
+                          "type": "array",
+                          "items": {
+                            "type": "string"
+                          },
+                          "description": "Arguments passed to the MCP server executable"
+                        },
+                        "env": {
+                          "type": "object",
+                          "additionalProperties": {
+                            "type": "string"
+                          },
+                          "description": "Environment variables applied when starting the MCP server"
+                        }
+                      }
+                    },
+                    {
+                      "type": "object",
+                      "required": [
+                        "type",
+                        "name",
+                        "url"
+                      ],
+                      "properties": {
+                        "type": {
+                          "const": "http",
+                          "description": "Connect to an MCP server over HTTP"
+                        },
+                        "name": {
+                          "type": "string",
+                          "description": "Display name for the MCP server"
+                        },
+                        "url": {
+                          "type": "string",
+                          "description": "URL of the MCP server"
+                        },
+                        "headers": {
+                          "type": "object",
+                          "additionalProperties": {
+                            "type": "string"
+                          },
+                          "description": "Optional HTTP headers sent when connecting to the MCP server"
+                        }
+                      }
                     }
-                  }
+                  ]
                 }
               },
               "enabled": {
                 "type": "boolean",
                 "default": true,
                 "description": "Whether this agent should be surfaced in chat"
+              },
+              "defaultMode": {
+                "type": "string",
+                "description": "Default mode ID to apply when creating a new chat session"
+              },
+              "defaultModel": {
+                "type": "string",
+                "description": "Default model ID to apply when creating a new chat session"
+              },
+              "defaultThinkingEffort": {
+                "type": "string",
+                "enum": [
+                  "off",
+                  "think",
+                  "megathink",
+                  "ultrathink"
+                ],
+                "default": "off",
+                "description": "Default thinking effort to apply when creating a new chat session"
               }
             }
           },
           "description": "List of ACP agents to use with their command and arguments",
-          "default": [
-            {
-              "cagent": {
-                "title": "Cagent",
-                "command": "/opt/homebrew/bin/cagent",
-                "args": [
-                  "acp",
-                  "/path/to/your/agents/cagent.yaml"
-                ],
-                "mcpServers": [
-                  {
-                    "type": "stdio",
-                    "name": "my-stdio-tooling",
-                    "command": "/opt/homebrew/bin/my-mcp",
-                    "args": [
-                      "serve"
-                    ]
-                  }
-                ],
-                "enabled": false
-              }
+          "default": {
+            "cagent": {
+              "label": "Cagent",
+              "command": "/opt/homebrew/bin/cagent",
+              "args": [
+                "acp",
+                "/path/to/your/agents/cagent.yaml"
+              ],
+              "mcpServers": [
+                {
+                  "type": "stdio",
+                  "name": "my-stdio-tooling",
+                  "command": "/opt/homebrew/bin/my-mcp",
+                  "args": [
+                    "serve"
+                  ]
+                },
+                {
+                  "type": "http",
+                  "name": "remote-tooling",
+                  "url": "http://localhost:3000"
+                }
+              ],
+              "enabled": false,
+              "defaultMode": "code",
+              "defaultModel": "gpt-5",
+              "defaultThinkingEffort": "megathink"
             }
-          ]
+          }
         }
       }
     },
@@ -327,6 +357,10 @@
       {
         "command": "acp.clearSessions",
         "title": "ACP: Delete all sessions"
+      },
+      {
+        "command": "acp.importAuggieManualCommands",
+        "title": "ACP: Import Auggie manual commands"
       }
     ],
     "chatParticipants": [
@@ -345,7 +379,7 @@
     ]
   },
   "scripts": {
-    "clean": "rm -rf ./out",
+    "clean": "node -e \"require('node:fs').rmSync('./out', { recursive: true, force: true })\"",
     "vscode:prepublish": "npm run clean && npm run compile",
     "compile": "tsc -p ./",
     "watch": "tsc -watch -p ./",
@@ -353,13 +387,13 @@
     "lint": "npx prettier . --check",
     "format": "npx prettier . --write",
     "package": "vsce package",
-    "install-dts": "npx @vscode/dts 1.108.1",
+    "install-dts": "npx @vscode/dts 1.120.0",
     "test": "mocha out/*.test.js"
   },
   "devDependencies": {
     "@types/mocha": "^10.0.10",
     "@types/node": "^25.2.1",
-    "@types/vscode": "^1.109.0",
+    "@types/vscode": "^1.120.0",
     "@vscode/vsce": "^3.7.1",
     "esbuild": "^0.27.1",
     "mocha": "^11.7.5",

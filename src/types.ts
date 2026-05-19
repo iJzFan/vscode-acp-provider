@@ -1,8 +1,20 @@
 // SPDX-License-Identifier: Apache-2.0
-import { RequestError } from "@agentclientprotocol/sdk";
+import { AvailableCommand, RequestError } from "@agentclientprotocol/sdk";
 import * as vscode from "vscode";
 
-export interface AcpStdioMcpServerConfiguration {
+export interface ImportedConfigSource {
+  readonly kind: "workspace" | "userProfile" | "plugin";
+  readonly label: string;
+  readonly path?: string;
+}
+
+interface ImportedMcpServerMetadata {
+  readonly source?: ImportedConfigSource;
+  readonly warnings?: readonly string[];
+}
+
+export interface AcpStdioMcpServerConfiguration
+  extends ImportedMcpServerMetadata {
   readonly type: "stdio";
   readonly name: string;
   readonly command: string;
@@ -10,7 +22,37 @@ export interface AcpStdioMcpServerConfiguration {
   readonly env?: Record<string, string>;
 }
 
-export type AcpMcpServerConfiguration = AcpStdioMcpServerConfiguration;
+export interface AcpHttpMcpServerConfiguration
+  extends ImportedMcpServerMetadata {
+  readonly type: "http";
+  readonly name: string;
+  readonly url: string;
+  readonly headers?: Record<string, string>;
+}
+
+export type AcpMcpServerConfiguration =
+  | AcpStdioMcpServerConfiguration
+  | AcpHttpMcpServerConfiguration;
+
+export interface ScannedSkill {
+  readonly name: string;
+  readonly description: string;
+  readonly directory: string;
+}
+
+export interface ManualCommandConfigurationEntry {
+  readonly name: string;
+  readonly description: string;
+  readonly input?: {
+    readonly hint: string;
+  };
+}
+
+export type SurfacedCommandSource = "acp" | "manual";
+
+export interface SurfacedCommand extends AvailableCommand {
+  readonly source: SurfacedCommandSource;
+}
 
 export interface AcpAgentConfigurationEntry {
   readonly label?: string;
@@ -20,6 +62,27 @@ export interface AcpAgentConfigurationEntry {
   readonly env?: Record<string, string>;
   readonly enabled?: boolean;
   readonly mcpServers?: readonly AcpMcpServerConfiguration[];
+  readonly manualCommands?: readonly ManualCommandConfigurationEntry[];
+  readonly skillPaths?: readonly string[];
+  readonly defaultMode?: string;
+  readonly defaultModel?: string;
+  readonly defaultThinkingEffort?: DefaultThinkingEffort;
+}
+
+export const ThinkingEffortModes = ["think", "megathink", "ultrathink"] as const;
+export const DefaultThinkingEffortValues = [
+  "off",
+  "think",
+  "megathink",
+  "ultrathink",
+] as const;
+
+export type ThinkConfig = (typeof ThinkingEffortModes)[number];
+export type DefaultThinkingEffort = (typeof DefaultThinkingEffortValues)[number];
+
+export interface ThinkState {
+  enabled: boolean;
+  config?: ThinkConfig;
 }
 
 export const VscodeToolNames = {
@@ -32,6 +95,7 @@ export const VscodeSessionOptions = {
   Mode: "mode",
   Model: "model",
   Agent: "agent",
+  Think: "think",
 };
 
 export const currentWorkspaceRoot = () =>

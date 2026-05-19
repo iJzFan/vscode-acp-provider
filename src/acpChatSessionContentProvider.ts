@@ -1,19 +1,24 @@
 // SPDX-License-Identifier: Apache-2.0
 import * as vscode from "vscode";
 import { Uri } from "vscode";
-import {
-  SessionConfigOption,
-  SessionConfigSelectOption,
-} from "@agentclientprotocol/sdk";
 import { AcpChatParticipant } from "./acpChatParticipant";
-import { AcpSessionManager, Options } from "./acpSessionManager";
+import {
+  AcpSessionManager,
+  Options,
+} from "./acpSessionManager";
 import { DisposableBase } from "./disposables";
-import { VscodeSessionOptions } from "./types";
+import {
+  ThinkingEffortModes,
+  type ThinkConfig,
+  VscodeSessionOptions,
+} from "./types";
 
 export class AcpChatSessionContentProvider
   extends DisposableBase
   implements vscode.ChatSessionContentProvider
 {
+  private supportsLiveThinkingEffort: boolean | undefined;
+
   constructor(
     private readonly sessionManager: AcpSessionManager,
     private readonly participant: AcpChatParticipant,
@@ -28,19 +33,10 @@ export class AcpChatSessionContentProvider
     );
 
     this._register(
-      sessionManager.onDidCurrentModeChange(({ resource, modeId }) => {
+      sessionManager.onDidContextWindowChange(({ resource, modelId }) => {
         this._onDidChangeChatSessionOptions.fire({
           resource,
-          updates: [{ optionId: VscodeSessionOptions.Mode, value: modeId }],
-        });
-      }),
-    );
-
-    this._register(
-      sessionManager.onDidCurrentModelChange(({ resource, modelId }) => {
-        this._onDidChangeChatSessionOptions.fire({
-          resource,
-          updates: [{ optionId: VscodeSessionOptions.Model, value: modelId }],
+          updates: [{ optionId: "model", value: modelId }],
         });
       }),
     );
@@ -75,11 +71,13 @@ export class AcpChatSessionContentProvider
       options: {
         [VscodeSessionOptions.Mode]: acpSession.defaultChatOptions.modeId,
         [VscodeSessionOptions.Model]: acpSession.defaultChatOptions.modelId,
-        ...this.buildThoughtLevelOptions(
-          acpSession.client
-            .getConfigOptions()
-            .filter((o) => o.category === "thought_level"),
-        ),
+        ...(this.supportsLiveThinkingEffort === false
+          ? {}
+          : {
+              [VscodeSessionOptions.Think]: acpSession.thinkState.enabled
+                ? (acpSession.thinkState.config || "think")
+                : "",
+            }),
       },
     };
     return session;
@@ -132,38 +130,37 @@ export class AcpChatSessionContentProvider
       });
     }
 
-    if (options.thoughtLevelOptions) {
-      for (const configOption of options.thoughtLevelOptions) {
-        // Only flat options (not grouped) are supported for thought_level
-        const flatOptions = configOption.options.filter(
-          (opt): opt is SessionConfigSelectOption => "value" in opt,
-        );
-        responseOptions.optionGroups?.push({
-          id: configOption.id,
-          name: vscode.l10n.t(configOption.name),
-          description: configOption.description
-            ? vscode.l10n.t(configOption.description)
-            : undefined,
-          items: flatOptions.map((opt) => ({
-            id: opt.value,
-            name: opt.name,
-            description: opt.description ?? undefined,
-          })),
-        });
-      }
+    if (this.supportsLiveThinkingEffort !== false) {
+      responseOptions.optionGroups?.push({
+        id: VscodeSessionOptions.Think,
+        name: vscode.l10n.t("Thinking"),
+        description: vscode.l10n.t("Configure the thinking / reasoning effort"),
+        items: [
+          {
+            id: "",
+            name: vscode.l10n.t("Off"),
+            description: vscode.l10n.t("Disable thinking effort"),
+          },
+          {
+            id: "think",
+            name: vscode.l10n.t("Think"),
+            description: vscode.l10n.t("Enable basic thinking effort"),
+          },
+          {
+            id: "megathink",
+            name: vscode.l10n.t("Mega Think"),
+            description: vscode.l10n.t("Enable enhanced thinking effort"),
+          },
+          {
+            id: "ultrathink",
+            name: vscode.l10n.t("Ultra Think"),
+            description: vscode.l10n.t("Enable maximum thinking effort"),
+          },
+        ],
+      });
     }
 
     return responseOptions;
-  }
-
-  private buildThoughtLevelOptions(
-    thoughtLevelOptions: SessionConfigOption[],
-  ): Record<string, string> {
-    const result: Record<string, string> = {};
-    for (const option of thoughtLevelOptions) {
-      result[option.id] = option.currentValue;
-    }
-    return result;
   }
 
   async provideHandleOptionsChange(
@@ -179,34 +176,38 @@ export class AcpChatSessionContentProvider
       return;
     }
 
-    const knownThoughtLevelIds = new Set(
-      session.client
-        .getConfigOptions()
-        .filter((o) => o.category === "thought_level")
-        .map((o) => o.id),
-    );
-
-    updates.forEach((update) => {
+    for (const update of updates) {
       if (update.optionId === VscodeSessionOptions.Mode && update.value) {
-        session.client.changeMode(session.acpSessionId, update.value);
+        await session.client.changeMode(session.acpSessionId, update.value);
       }
 
       if (update.optionId === VscodeSessionOptions.Model && update.value) {
-        session.client.changeModel(session.acpSessionId, update.value);
+        await session.client.changeModel(session.acpSessionId, update.value);
       }
 
-      if (
-        knownThoughtLevelIds.has(update.optionId) &&
-        update.value &&
-        typeof update.value === "string"
-      ) {
-        session.client.setSessionConfigOption(
-          session.acpSessionId,
-          update.optionId,
-          update.value,
+      if (update.optionId === VscodeSessionOptions.Think) {
+        const enabled = update.value !== "";
+        const config =
+          update.value &&
+          ThinkingEffortModes.includes(update.value as ThinkConfig)
+            ? (update.value as ThinkConfig)
+            : undefined;
+        const thinkResult = await this.sessionManager.setThink(
+          resource,
+          enabled,
+          config,
         );
+
+        if (thinkResult.downgradedToStartupOnly) {
+          const modeLabel = enabled ? (config || "think") : "off";
+          this.supportsLiveThinkingEffort = false;
+          this.logChannel.info(
+            `ACP agent does not support live thinking-effort updates for agent session ${session.acpSessionId}; hiding the Thinking session option and keeping '${modeLabel}' as the startup preference.`,
+          );
+          this._onDidChangeChatSessionProviderOptions.fire();
+        }
       }
-    });
+    }
   }
 
   override dispose(): void {

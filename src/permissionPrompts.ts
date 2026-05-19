@@ -43,6 +43,26 @@ interface PendingPrompt {
   cancellationListener?: vscode.Disposable;
 }
 
+type ToolRiskAssessment = {
+  readonly level: "low" | "medium" | "high";
+  readonly reasons: readonly string[];
+};
+
+const HIGH_RISK_COMMAND_PATTERNS: readonly RegExp[] = [
+  /\b(?:rm|del|rmdir|rd|remove-item)\b/i,
+  /\bgit\s+reset\s+--hard\b/i,
+  /\bgit\s+clean\s+-f/i,
+  /\b(?:mkfs|format|diskpart)\b/i,
+  /\bcurl\b.*\|\s*(?:sh|bash|zsh|pwsh|powershell)\b/i,
+  /\bsudo\b/i,
+];
+
+const MEDIUM_RISK_COMMAND_PATTERNS: readonly RegExp[] = [
+  /\b(?:curl|wget|invoke-webrequest|invoke-restmethod)\b/i,
+  /\b(?:npm|pnpm|yarn|pip|uv|brew|apt|winget|choco)\b\s+(?:install|update|upgrade)\b/i,
+  /\b(?:cp|copy|mv|move)\b/i,
+];
+
 export function createPermissionResolveCommandId(agentId: string): string {
   return `acpClient.resolvePermission.${agentId}`;
 }
@@ -172,10 +192,21 @@ export class PermissionPromptManager
     const toolName = this.getToolName(toolCall);
     const command = this.formatCommand(toolCall.rawInput, 240);
     const hasCommand = command !== "unknown";
-    const title = `Permission required: ${toolName}`;
-    const message = hasCommand
+    const risk = this.assessToolRisk(pending.request);
+    if (risk.level !== "low") {
+      context.response.warning(this.buildRiskWarning(risk, command));
+    }
+    const title =
+      risk.level === "low"
+        ? `Permission required: ${toolName}`
+        : `Permission required (${risk.level.toUpperCase()} risk): ${toolName}`;
+    const baseMessage = hasCommand
       ? `Execute: ${command}`
       : this.describeToolCall(pending.request);
+    const message =
+      risk.level === "low"
+        ? baseMessage
+        : `${this.buildRiskSummary(risk)}\n\n${baseMessage}`;
     const input: {
       title: string;
       message: string;
@@ -539,6 +570,7 @@ export class PermissionPromptManager
   private async promptViaModal(
     request: RequestPermissionRequest,
   ): Promise<RequestPermissionResponse> {
+    const risk = this.assessToolRisk(request);
     const description = this.describeToolCall(request);
     const picks = request.options.map((option) => ({
       title: this.optionLabel(option),
@@ -546,7 +578,9 @@ export class PermissionPromptManager
     }));
 
     const selection = await vscode.window.showWarningMessage(
-      `Permission required: ${description}`,
+      risk.level === "low"
+        ? `Permission required: ${description}`
+        : `Permission required (${risk.level.toUpperCase()} risk): ${description}`,
       { modal: true },
       ...picks,
     );
@@ -564,6 +598,91 @@ export class PermissionPromptManager
     const title = request.toolCall.title ?? "Tool call";
     const kind = request.toolCall.kind ?? "unknown";
     return `${title} (${kind})`;
+  }
+
+  private assessToolRisk(
+    request: RequestPermissionRequest,
+  ): ToolRiskAssessment {
+    const toolCall = request.toolCall as {
+      title?: string;
+      kind?: string;
+      rawInput?: unknown;
+    };
+    const titleText = `${toolCall.title ?? ""} ${toolCall.kind ?? ""}`
+      .toLowerCase()
+      .trim();
+    const command = this.formatCommand(toolCall.rawInput, 1000);
+    const reasons = new Set<string>();
+    let score = 0;
+
+    if ((toolCall.kind ?? "").toLowerCase() === "execute") {
+      score = Math.max(score, 2);
+      reasons.add("This tool executes a terminal command.");
+    }
+
+    if (command !== "unknown") {
+      if (HIGH_RISK_COMMAND_PATTERNS.some((pattern) => pattern.test(command))) {
+        score = Math.max(score, 3);
+        reasons.add("The command looks destructive or could make irreversible system changes.");
+      } else if (
+        MEDIUM_RISK_COMMAND_PATTERNS.some((pattern) => pattern.test(command))
+      ) {
+        score = Math.max(score, 2);
+        reasons.add("The command installs packages, changes files, or reaches a network endpoint.");
+      }
+
+      if (/https?:\/\//i.test(command)) {
+        score = Math.max(score, 2);
+        reasons.add("The command references an external network resource.");
+      }
+    }
+
+    if (/(delete|remove|reset|overwrite|destroy|drop)/i.test(titleText)) {
+      score = Math.max(score, 3);
+      reasons.add("The tool description suggests destructive changes.");
+    } else if (/(write|edit|patch|modify|move|rename|create)/i.test(titleText)) {
+      score = Math.max(score, 2);
+      reasons.add("The tool may modify files or workspace state.");
+    }
+
+    if (request.options.some((option) => option.kind === "allow_always")) {
+      score = Math.max(score, 2);
+      reasons.add("This request includes a persistent allow option.");
+    }
+
+    return {
+      level: score >= 3 ? "high" : score >= 2 ? "medium" : "low",
+      reasons: Array.from(reasons).slice(0, 3),
+    };
+  }
+
+  private buildRiskSummary(risk: ToolRiskAssessment): string {
+    if (risk.level === "low") {
+      return "Risk: low.";
+    }
+
+    const reasonText = risk.reasons.length
+      ? ` ${risk.reasons.join(" ")}`
+      : "";
+    return `Risk: ${risk.level.toUpperCase()}.${reasonText}`;
+  }
+
+  private buildRiskWarning(
+    risk: ToolRiskAssessment,
+    command: string,
+  ): vscode.MarkdownString {
+    const markdown = new vscode.MarkdownString(undefined, true);
+    markdown.appendMarkdown(
+      `**${risk.level.toUpperCase()} risk permission request**\n\n`,
+    );
+    for (const reason of risk.reasons) {
+      markdown.appendMarkdown(`- ${reason}\n`);
+    }
+    if (command !== "unknown") {
+      markdown.appendMarkdown("\nCommand: ");
+      markdown.appendMarkdown(this.wrapInlineCode(command));
+    }
+    return markdown;
   }
 
   private getToolName(toolCall: { title?: string; kind?: string }): string {

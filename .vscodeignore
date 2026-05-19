@@ -12,3 +12,5 @@ docs/**
 .github/**
 agents/**
 .prettier*
+*.zip
+.agents/**

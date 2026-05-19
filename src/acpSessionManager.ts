@@ -2,15 +2,25 @@
 import vscode, { ChatSessionItem, ChatSessionStatus } from "vscode";
 import { AcpClient, AcpPermissionHandler, createAcpClient } from "./acpClient";
 import { DiskSession, SessionDb } from "./acpSessionDb";
-import { AcpSessionSyncer } from "./acpSessionSyncer";
 import { AgentRegistryEntry } from "./agentRegistry";
 import { createSessionUri, decodeVscodeResource } from "./chatIdentifiers";
 import { DisposableBase } from "./disposables";
 import { getWorkspaceCwd } from "./permittedPaths";
 import { TurnBuilder } from "./turnBuilder";
 import {
-  AvailableCommand,
-  SessionConfigOption,
+  extractReadableErrorMessage,
+  type SurfacedCommand,
+  type ScannedSkill,
+  type ThinkConfig,
+  type ThinkState,
+} from "./types";
+import {
+  buildAvailableCommandLogSummary,
+  toManualSurfacedCommand,
+} from "./commandMatching";
+import { scanSkillDirectories } from "./skillDiscovery";
+import {
+  type AvailableCommand,
   SessionModelState,
   SessionModeState,
   type SessionNotification,
@@ -20,10 +30,39 @@ export class Session {
   private _status: ChatSessionStatus;
   private _title: string;
   private _updatedAt: number;
+  private _thinkState: ThinkState;
   pendingRequest?: {
     cancellation: vscode.CancellationTokenSource;
     permissionContext?: vscode.Disposable;
   };
+
+  /** Resolver functions for each queued prompt, in FIFO order. */
+  private _queueResolvers: Array<() => void> = [];
+
+  /**
+   * Wait for this session's turn to send a prompt.
+   * If no request is currently in flight, returns immediately.
+   * Otherwise, adds the caller to a FIFO queue and blocks until
+   * every earlier entry has been dequeued.
+   */
+  async waitForTurn(): Promise<void> {
+    if (!this.pendingRequest) {
+      return;
+    }
+    return new Promise<void>((resolve) => {
+      this._queueResolvers.push(resolve);
+    });
+  }
+
+  /** Dequeue and signal the next waiter (if any) to proceed. */
+  signalNext(): void {
+    const next = this._queueResolvers.shift();
+    next?.();
+  }
+
+  get queueLength(): number {
+    return this._queueResolvers.length;
+  }
 
   /** Latest context window usage reported via `usage_update` notifications. */
   contextWindowUsed?: number;
@@ -32,7 +71,7 @@ export class Session {
 
   constructor(
     readonly agent: AgentRegistryEntry,
-    readonly vscodeResource: vscode.Uri,
+    private _vscodeResource: vscode.Uri,
     readonly client: AcpClient,
     readonly acpSessionId: string,
     readonly defaultChatOptions: { modeId: string; modelId: string },
@@ -42,10 +81,19 @@ export class Session {
     this.pendingRequest = undefined;
     this._title = `Session [${agent.id}] ${acpSessionId}`;
     this._updatedAt = Date.now();
+    this._thinkState = { enabled: false };
   }
 
   get title(): string {
     return this._title;
+  }
+
+  get vscodeResource(): vscode.Uri {
+    return this._vscodeResource;
+  }
+
+  set vscodeResource(value: vscode.Uri) {
+    this._vscodeResource = value;
   }
 
   set title(value: string) {
@@ -57,6 +105,15 @@ export class Session {
 
   get status(): ChatSessionStatus {
     return this._status;
+  }
+
+  get thinkState(): ThinkState {
+    return this._thinkState;
+  }
+
+  setThinkState(enabled: boolean, config?: ThinkConfig): void {
+    this._thinkState = { enabled, config };
+    this._updatedAt = Date.now();
   }
 
   markAsInProgress(): void {
@@ -83,21 +140,21 @@ export class Session {
 export type Options = {
   modes: SessionModeState | null;
   models: SessionModelState | null;
-  thoughtLevelOptions: SessionConfigOption[] | null;
+};
+
+export type SetThinkResult = {
+  appliedDynamically: boolean;
+  downgradedToStartupOnly: boolean;
+  effectiveEnabled: boolean;
+  effectiveConfig?: ThinkConfig;
+  reason?: string;
 };
 
 export interface AcpSessionManager extends vscode.Disposable {
   onDidChangeSession: vscode.Event<{ original: Session; modified: Session }>;
   onDidOptionsChange: vscode.Event<void>;
-  onDidCurrentModeChange: vscode.Event<{
-    resource: vscode.Uri;
-    modeId: string;
-  }>;
-  onDidCurrentModelChange: vscode.Event<{
-    resource: vscode.Uri;
-    modelId: string;
-  }>;
   onDidUsageUpdate: vscode.Event<{ modelId: string; maxWindowSize: number }>;
+  onDidContextWindowChange: vscode.Event<{ resource: vscode.Uri; modelId: string }>;
 
   createOrGet(vscodeResource: vscode.Uri): Promise<{
     session: Session;
@@ -111,7 +168,14 @@ export interface AcpSessionManager extends vscode.Disposable {
     modified: Session,
   ): Promise<void>;
   getOptions(): Promise<Options>;
-  getAvailableCommands(sessionId: string): AvailableCommand[];
+  setThink(
+    vscodeResource: vscode.Uri,
+    enabled: boolean,
+    config?: ThinkConfig,
+  ): Promise<SetThinkResult>;
+  getAvailableCommands(sessionId: string): SurfacedCommand[];
+  getKnownAvailableCommands(): SurfacedCommand[];
+  getDiscoveredSkills(): ScannedSkill[];
   closeSession(vscodeResource: vscode.Uri): void;
   createSessionUri(session: Session): vscode.Uri;
   reportContextWindowSize(
@@ -126,7 +190,6 @@ export function createAcpSessionManager(
   permissionHandler: AcpPermissionHandler,
   logger: vscode.LogOutputChannel,
   clientProvider?: () => AcpClient,
-  sessionSyncer?: AcpSessionSyncer,
 ): AcpSessionManager {
   return new SessionManager(
     sessionDb,
@@ -134,23 +197,33 @@ export function createAcpSessionManager(
     permissionHandler,
     logger,
     clientProvider,
-    sessionSyncer,
   );
 }
 
 class SessionManager extends DisposableBase implements AcpSessionManager {
-  private readonly clientFactory: () => AcpClient;
+  private readonly client: AcpClient;
   constructor(
     private readonly sessionDb: SessionDb,
     private readonly agent: AgentRegistryEntry,
     readonly permissionHandler: AcpPermissionHandler,
     private readonly logger: vscode.LogOutputChannel,
-    clientFactory: () => AcpClient = () =>
+    clientProvider: () => AcpClient = () =>
       createAcpClient(agent, permissionHandler, logger),
-    private readonly sessionSyncer?: AcpSessionSyncer,
   ) {
     super();
-    this.clientFactory = clientFactory;
+    this.client = this._register(clientProvider());
+
+    this._register(
+      this.client.onSessionUpdate((update) =>
+        this.handlePreChatSessionUpdate(update),
+      ),
+    );
+
+    this._register(
+      this.client.onDidOptionsChanged(() => {
+        this._onDidChangeOptions.fire();
+      }),
+    );
 
     this._register(
       this.sessionDb.onDataChanged(async () => {
@@ -177,45 +250,32 @@ class SessionManager extends DisposableBase implements AcpSessionManager {
     new vscode.EventEmitter<void>();
   onDidOptionsChange: vscode.Event<void> = this._onDidChangeOptions.event;
 
-  private readonly _onDidCurrentModeChange: vscode.EventEmitter<{
-    resource: vscode.Uri;
-    modeId: string;
-  }> = new vscode.EventEmitter<{ resource: vscode.Uri; modeId: string }>();
-  onDidCurrentModeChange: vscode.Event<{
-    resource: vscode.Uri;
-    modeId: string;
-  }> = this._onDidCurrentModeChange.event;
-
-  private readonly _onDidCurrentModelChange: vscode.EventEmitter<{
-    resource: vscode.Uri;
-    modelId: string;
-  }> = new vscode.EventEmitter<{ resource: vscode.Uri; modelId: string }>();
-  onDidCurrentModelChange: vscode.Event<{
-    resource: vscode.Uri;
-    modelId: string;
-  }> = this._onDidCurrentModelChange.event;
-
   private readonly _onDidUsageUpdate = new vscode.EventEmitter<{
     modelId: string;
     maxWindowSize: number;
   }>();
   onDidUsageUpdate: vscode.Event<{ modelId: string; maxWindowSize: number }> =
     this._onDidUsageUpdate.event;
+
+  private readonly _onDidContextWindowChange = new vscode.EventEmitter<{
+    resource: vscode.Uri;
+    modelId: string;
+  }>();
+  onDidContextWindowChange: vscode.Event<{
+    resource: vscode.Uri;
+    modelId: string;
+  }> = this._onDidContextWindowChange.event;
   // end event definitions --------------------------------------------------
 
   private diskSessions: Map<string, DiskSession> | null = null;
   private activeSessions: Map<string, Session> = new Map();
-  private lastKnownModelId: string | null = null;
-  private availableCommands: Map<string, AvailableCommand[]> = new Map();
-  private readonly sessionSubscriptions = new Map<
-    string,
-    vscode.Disposable[]
-  >();
-  private cachedOptions: Options = {
-    modes: null,
-    models: null,
-    thoughtLevelOptions: null,
-  };
+  private availableCommands: Map<string, SurfacedCommand[]> = new Map();
+  private discoveredSkills: ScannedSkill[] = [];
+  private probeSession: {
+    acpSessionId: string;
+    modes: SessionModeState | null;
+    models: SessionModelState | null;
+  } | null = null;
 
   createSessionUri(session: Session): vscode.Uri {
     const uri = createSessionUri(this.agent.id, session.acpSessionId);
@@ -225,11 +285,6 @@ class SessionManager extends DisposableBase implements AcpSessionManager {
     );
     if (entry) {
       this.activeSessions.delete(entry[0]);
-      const subs = this.sessionSubscriptions.get(entry[0]);
-      if (subs) {
-        this.sessionSubscriptions.delete(entry[0]);
-        this.sessionSubscriptions.set(session.acpSessionId, subs);
-      }
       this.logger.debug(
         `Replaced session with new session id ${session.acpSessionId}`,
       );
@@ -238,6 +293,7 @@ class SessionManager extends DisposableBase implements AcpSessionManager {
         `Created session URI for session id ${session.acpSessionId} without replacement`,
       );
     }
+    session.vscodeResource = uri;
     this.activeSessions.set(session.acpSessionId, session);
     return uri;
   }
@@ -246,6 +302,7 @@ class SessionManager extends DisposableBase implements AcpSessionManager {
     session: Session;
     history?: Array<vscode.ChatRequestTurn2 | vscode.ChatResponseTurn2>;
   }> {
+    this.refreshSkills();
     const decodedResource = decodeVscodeResource(vscodeResource);
 
     if (decodedResource.isUntitled) {
@@ -258,40 +315,51 @@ class SessionManager extends DisposableBase implements AcpSessionManager {
           `Creating new untitled session for resource ${vscodeResource.toString()}`,
         );
 
-        const client = this.clientFactory();
-        this.sessionSubscriptions.set(decodedResource.sessionId, [
-          client.onSessionUpdate((update) =>
-            this.handlePreChatSessionUpdate(update),
-          ),
-          client.onDidOptionsChanged(() => {
-            const newOptions = this.buildOptions(client);
-            this.detectAndFireModelChange(newOptions);
-            this.cachedOptions = newOptions;
-            this._onDidChangeOptions.fire();
-          }),
-        ]);
+        const thinkingSettings = this.getDefaultThinkingSettings();
 
-        const acpSession = await client.createSession(
-          getWorkspaceCwd(),
-          this.agent.mcpServers,
-        );
-        this.sessionSyncer
-          ?.sync(this.agent.id, client)
-          .catch((e) =>
-            this.logger.warn(`[acpSessionSyncer] Sync failed: ${e}`),
+        let acpSessionId: string;
+        let modeId: string;
+        let modelId: string;
+
+        if (this.probeSession) {
+          this.logger.info(
+            `Reusing probe session ${this.probeSession.acpSessionId} for untitled session`,
           );
-        this.cachedOptions = this.buildOptions(client);
-
+          acpSessionId = this.probeSession.acpSessionId;
+          modeId = this.probeSession.modes?.currentModeId || "";
+          modelId = this.probeSession.models?.currentModelId || "";
+          this.probeSession = null;
+        } else {
+          const acpSession = await this.client.createSession(
+            getWorkspaceCwd(),
+            this.agent.mcpServers,
+            thinkingSettings,
+          );
+          acpSessionId = acpSession.sessionId;
+          modeId = acpSession.modes?.currentModeId || "";
+          modelId = acpSession.models?.currentModelId || "";
+        }
+        ({ modeId, modelId } = await this.applyConfiguredSessionDefaults(
+          acpSessionId,
+          modeId,
+          modelId,
+        ));
         const session = new Session(
           this.agent,
           vscodeResource,
-          client,
-          acpSession.sessionId,
+          this.client,
+          acpSessionId,
           {
-            modeId: acpSession.modes?.currentModeId || "",
-            modelId: acpSession.models?.currentModelId || "",
+            modeId,
+            modelId,
           },
         );
+        if (thinkingSettings?.thinkingModeEnabled) {
+          session.setThinkState(
+            true,
+            thinkingSettings.thinkingConfig ?? "think",
+          );
+        }
         this.activeSessions.set(decodedResource.sessionId, session);
 
         const expectedOriginal = new Session(
@@ -315,58 +383,102 @@ class SessionManager extends DisposableBase implements AcpSessionManager {
           `Session found on disk for resource ${vscodeResource.toString()}`,
         );
 
-        const client = this.clientFactory();
-        this.sessionSubscriptions.set(decodedResource.sessionId, [
-          client.onSessionUpdate((update) =>
-            this.handlePreChatSessionUpdate(update),
-          ),
-          client.onDidOptionsChanged(() => {
-            const newOptions = this.buildOptions(client);
-            this.detectAndFireModelChange(newOptions);
-            this.cachedOptions = newOptions;
-            this._onDidChangeOptions.fire();
-          }),
-        ]);
-
-        const response = await client.loadSession(
-          existingSession.sessionId,
-          existingSession.cwd,
-          this.agent.mcpServers,
-        );
-        this.sessionSyncer
-          ?.sync(this.agent.id, client)
-          .catch((e) =>
-            this.logger.warn(`[acpSessionSyncer] Sync failed: ${e}`),
+        try {
+          const response = await this.client.loadSession(
+            existingSession.sessionId,
+            existingSession.cwd,
+            this.agent.mcpServers,
           );
-        this.cachedOptions = this.buildOptions(client);
+          const session = new Session(
+            this.agent,
+            vscodeResource,
+            this.client,
+            existingSession.sessionId,
+            {
+              modeId: response.modeId || "",
+              modelId: response.modelId || "",
+            },
+          );
+          this.activeSessions.set(decodedResource.sessionId, session);
 
-        const session = new Session(
-          this.agent,
-          vscodeResource,
-          client,
-          existingSession.sessionId,
-          {
-            modeId: response.modeId || "",
-            modelId: response.modelId || "",
-          },
-        );
-        this.activeSessions.set(decodedResource.sessionId, session);
+          const turnBuilder = new TurnBuilder(this.agent.id, this.logger);
+          response.notifications.forEach((notification) =>
+            turnBuilder.processNotification(notification),
+          );
+          const history = turnBuilder.getTurns();
 
-        const turnBuilder = new TurnBuilder(this.agent.id, this.logger);
-        response.notifications.forEach((notification) =>
-          turnBuilder.processNotification(notification),
-        );
-        const history = turnBuilder.getTurns();
+          this.logger.debug(
+            `Resuming session with ${history.length} history turns from disk session.`,
+          );
+          return { session, history };
+        } catch (error) {
+          const errorMessage = error instanceof Error ? error.message : String(error);
+          if (
+            errorMessage.includes("Session not found") ||
+            errorMessage.includes("not found")
+          ) {
+            this.logger.warn(
+              `Session ${existingSession.sessionId} not found on agent side, creating new session. Error: ${errorMessage}`,
+            );
+            await this.sessionDb.deleteSession(
+              this.agent.id,
+              existingSession.sessionId,
+            );
+          } else {
+            throw error;
+          }
+        }
+      }
 
-        this.logger.debug(
-          `Resuming session with ${history.length} history turns from disk session.`,
-        );
-        return { session, history };
-      } else {
-        throw new Error(
-          `No existing session found for resource ${vscodeResource.toString()}`,
+      this.logger.info(
+        `Creating new session for resource ${vscodeResource.toString()}`,
+      );
+
+      const thinkingSettings = this.getDefaultThinkingSettings();
+
+      const acpSession = await this.client.createSession(
+        getWorkspaceCwd(),
+        this.agent.mcpServers,
+        thinkingSettings,
+      );
+
+      const configuredDefaults = await this.applyConfiguredSessionDefaults(
+        acpSession.sessionId,
+        acpSession.modes?.currentModeId || "",
+        acpSession.models?.currentModelId || "",
+      );
+
+      const session = new Session(
+        this.agent,
+        vscodeResource,
+        this.client,
+        acpSession.sessionId,
+        {
+          modeId: configuredDefaults.modeId,
+          modelId: configuredDefaults.modelId,
+        },
+      );
+      if (thinkingSettings?.thinkingModeEnabled) {
+        session.setThinkState(
+          true,
+          thinkingSettings.thinkingConfig ?? "think",
         );
       }
+      this.activeSessions.set(decodedResource.sessionId, session);
+
+      const expectedOriginal = new Session(
+        session.agent,
+        vscodeResource,
+        session.client,
+        session.acpSessionId,
+        session.defaultChatOptions,
+      );
+
+      this._onDidChangeSession.fire({
+        original: expectedOriginal,
+        modified: session,
+      });
+      return { session };
     }
   }
 
@@ -427,21 +539,131 @@ class SessionManager extends DisposableBase implements AcpSessionManager {
   }
 
   async getOptions(): Promise<Options> {
-    return this.cachedOptions;
-  }
+    let modes = this.client.getSupportedModeState();
+    let models = this.client.getSupportedModelState();
 
-  private buildOptions(client: AcpClient): Options {
-    return {
-      modes: client.getSupportedModeState(),
-      models: client.getSupportedModelState(),
-      thoughtLevelOptions: client
-        .getConfigOptions()
-        .filter((o) => o.category === "thought_level"),
+    const options: Options = {
+      modes,
+      models,
     };
+    return options;
   }
 
-  getAvailableCommands(sessionId: string): AvailableCommand[] {
-    return this.availableCommands.get(sessionId) ?? [];
+  async setThink(
+    vscodeResource: vscode.Uri,
+    enabled: boolean,
+    config?: ThinkConfig,
+  ): Promise<SetThinkResult> {
+    const decoded = decodeVscodeResource(vscodeResource);
+    const session = this.activeSessions.get(decoded.sessionId);
+
+    if (!session) {
+      this.logger.warn(
+        `No active session found for resource ${vscodeResource.toString()} to set think mode.`,
+      );
+      return {
+        appliedDynamically: false,
+        downgradedToStartupOnly: false,
+        effectiveEnabled: enabled,
+        effectiveConfig: config,
+        reason: "No active session found",
+      };
+    }
+
+    try {
+      const result = await session.client.setThink(
+        session.acpSessionId,
+        enabled,
+        config,
+      );
+
+      if (result.success) {
+        const original = this.snapshotSession(session);
+        session.setThinkState(
+          result.currentThinkEnabled,
+          result.currentThinkConfig as ThinkConfig | undefined,
+        );
+        this._onDidChangeSession.fire({ original, modified: session });
+
+        return {
+          appliedDynamically: true,
+          downgradedToStartupOnly: false,
+          effectiveEnabled: result.currentThinkEnabled,
+          effectiveConfig: result.currentThinkConfig as ThinkConfig | undefined,
+        };
+      }
+
+      if (result.unsupported) {
+        const original = this.snapshotSession(session);
+        session.setThinkState(enabled, config);
+        this._onDidChangeSession.fire({ original, modified: session });
+
+        return {
+          appliedDynamically: false,
+          downgradedToStartupOnly: true,
+          effectiveEnabled: enabled,
+          effectiveConfig: config,
+          reason:
+            result.errorMessage ||
+            "session/set_think is unsupported by the current ACP agent",
+        };
+      }
+
+      return {
+        appliedDynamically: false,
+        downgradedToStartupOnly: false,
+        effectiveEnabled: session.thinkState.enabled,
+        effectiveConfig: session.thinkState.config,
+        reason: result.errorMessage || "Unknown non-success response",
+      };
+    } catch (error) {
+      this.logger.error(
+        `Failed to set think mode: ${extractReadableErrorMessage(error)}`,
+      );
+      throw error;
+    }
+  }
+
+  getAvailableCommands(sessionId: string): SurfacedCommand[] {
+    const commandsByName = new Map<string, SurfacedCommand>();
+
+    for (const command of this.agent.manualCommands.map((command) =>
+      toManualSurfacedCommand(command),
+    )) {
+      commandsByName.set(command.name, command);
+    }
+
+    for (const command of this.availableCommands.get(sessionId) ?? []) {
+      commandsByName.set(command.name, command);
+    }
+
+    return Array.from(commandsByName.values()).sort((left, right) =>
+      left.name.localeCompare(right.name),
+    );
+  }
+
+  getDiscoveredSkills(): ScannedSkill[] {
+    return this.discoveredSkills;
+  }
+
+  getKnownAvailableCommands(): SurfacedCommand[] {
+    const commandsByName = new Map<string, SurfacedCommand>();
+
+    for (const command of this.agent.manualCommands.map((entry) =>
+      toManualSurfacedCommand(entry),
+    )) {
+      commandsByName.set(command.name, command);
+    }
+
+    for (const commands of this.availableCommands.values()) {
+      for (const command of commands) {
+        commandsByName.set(command.name, command);
+      }
+    }
+
+    return Array.from(commandsByName.values()).sort((left, right) =>
+      left.name.localeCompare(right.name),
+    );
   }
 
   reportContextWindowSize(
@@ -454,40 +676,30 @@ class SessionManager extends DisposableBase implements AcpSessionManager {
       modelId: session.defaultChatOptions.modelId,
       maxWindowSize: args.size,
     });
-  }
-
-  private detectAndFireModelChange(newOptions: Options): void {
-    const newModelId = newOptions.models?.currentModelId ?? null;
-    if (newModelId !== null && newModelId !== this.lastKnownModelId) {
-      this.lastKnownModelId = newModelId;
-      for (const session of this.activeSessions.values()) {
-        this._onDidCurrentModelChange.fire({
-          resource: session.vscodeResource,
-          modelId: newModelId,
-        });
-      }
-    }
+    this._onDidContextWindowChange.fire({
+      resource: session.vscodeResource,
+      modelId: session.defaultChatOptions.modelId,
+    });
   }
 
   // this handler must handle none-chat session messages
+  private refreshSkills(): void {
+    this.discoveredSkills = scanSkillDirectories(this.agent.skillPaths);
+    this.logger.info(
+      `Discovered ${this.discoveredSkills.length} skills from configured paths`,
+    );
+  }
+
   private handlePreChatSessionUpdate(notification: SessionNotification): void {
     const update = notification.update;
     if (update.sessionUpdate === "available_commands_update") {
-      this.logger.info(`Received ${update.availableCommands.length} commands`);
+      this.logger.info(
+        `[acp:${this.agent.id}] Received ${update.availableCommands.length} ACP commands for session ${notification.sessionId}: ${buildAvailableCommandLogSummary(update.availableCommands.map((command) => ({ ...command, source: "acp" as const })))}`,
+      );
       this.setAvailableCommands(
         notification.sessionId,
         update.availableCommands,
       );
-    } else if (update.sessionUpdate === "current_mode_update") {
-      for (const session of this.activeSessions.values()) {
-        if (session.acpSessionId === notification.sessionId) {
-          this._onDidCurrentModeChange.fire({
-            resource: session.vscodeResource,
-            modeId: update.currentModeId,
-          });
-          break;
-        }
-      }
     }
   }
 
@@ -495,7 +707,93 @@ class SessionManager extends DisposableBase implements AcpSessionManager {
     sessionId: string,
     commands: AvailableCommand[],
   ): void {
-    this.availableCommands.set(sessionId, commands);
+    this.availableCommands.set(
+      sessionId,
+      commands.map((command) => ({ ...command, source: "acp" as const })),
+    );
+  }
+
+  private getDefaultThinkingSettings(): {
+    thinkingModeEnabled: boolean;
+    thinkingConfig?: ThinkConfig;
+  } | undefined {
+    const configuredDefault = this.agent.defaultThinkingEffort;
+    if (!configuredDefault || configuredDefault === "off") {
+      return undefined;
+    }
+
+    return {
+      thinkingModeEnabled: true,
+      thinkingConfig: configuredDefault,
+    };
+  }
+
+  private async applyConfiguredSessionDefaults(
+    sessionId: string,
+    modeId: string,
+    modelId: string,
+  ): Promise<{ modeId: string; modelId: string }> {
+    let nextModeId = modeId;
+    let nextModelId = modelId;
+
+    if (this.agent.defaultMode && this.agent.defaultMode !== nextModeId) {
+      try {
+        await this.client.changeMode(sessionId, this.agent.defaultMode);
+        nextModeId = this.agent.defaultMode;
+      } catch (error) {
+        this.logger.warn(
+          `Failed to apply default mode '${this.agent.defaultMode}': ${error instanceof Error ? error.message : String(error)}`,
+        );
+      }
+    }
+
+    if (this.agent.defaultModel && this.agent.defaultModel !== nextModelId) {
+      try {
+        await this.client.changeModel(sessionId, this.agent.defaultModel);
+        nextModelId = this.agent.defaultModel;
+      } catch (error) {
+        this.logger.warn(
+          `Failed to apply default model '${this.agent.defaultModel}': ${error instanceof Error ? error.message : String(error)}`,
+        );
+      }
+    }
+
+    return {
+      modeId: nextModeId,
+      modelId: nextModelId,
+    };
+  }
+
+  private snapshotSession(session: Session): Session {
+    const snapshot = new Session(
+      session.agent,
+      session.vscodeResource,
+      session.client,
+      session.acpSessionId,
+      session.defaultChatOptions,
+      session.cwd,
+    );
+    snapshot.title = session.title;
+    if (session.thinkState.enabled) {
+      snapshot.setThinkState(session.thinkState.enabled, session.thinkState.config);
+    }
+
+    switch (session.status) {
+      case ChatSessionStatus.Completed:
+        snapshot.markAsCompleted();
+        break;
+      case ChatSessionStatus.Failed:
+        snapshot.markAsFailed();
+        break;
+      case ChatSessionStatus.NeedsInput:
+        snapshot.markAsNeedsInput();
+        break;
+      default:
+        snapshot.markAsInProgress();
+        break;
+    }
+
+    return snapshot;
   }
 
   private async loadDiskSessionsIfNeeded(
@@ -516,13 +814,6 @@ class SessionManager extends DisposableBase implements AcpSessionManager {
     session.pendingRequest?.cancellation.cancel();
     session.pendingRequest?.permissionContext?.dispose();
     session.pendingRequest = undefined;
-
-    this.sessionSubscriptions.get(sessionId)?.forEach((s) => s.dispose());
-    this.sessionSubscriptions.delete(sessionId);
-
-    session.client.dispose().catch(() => {
-      /* noop — best-effort process kill */
-    });
   }
 
   closeSession(vscodeResource: vscode.Uri): void {
@@ -546,12 +837,10 @@ class SessionManager extends DisposableBase implements AcpSessionManager {
       this.disposeSessionClient(sessionId, session);
     }
     this.activeSessions.clear();
-    this.sessionSubscriptions.clear();
+    this.probeSession = null;
     this.diskSessions?.clear();
     this.availableCommands.clear();
     this._onDidChangeSession.dispose();
     this._onDidChangeOptions.dispose();
-    this._onDidCurrentModeChange.dispose();
-    this._onDidCurrentModelChange.dispose();
   }
 }

@@ -2,6 +2,8 @@
 import {
   AgentCapabilities,
   Client,
+  ClientCapabilities,
+  ClientSideConnection,
   ContentBlock,
   ListSessionsResponse,
   LoadSessionResponse,
@@ -20,6 +22,7 @@ import * as vscode from "vscode";
 import { AgentRegistryEntry } from "./agentRegistry";
 import { DisposableBase } from "./disposables";
 import { AcpClient, AcpPermissionHandler } from "./acpClient";
+import type { ThinkConfig } from "./types";
 
 const STREAM_DELAY_MS = 500;
 const DEFAULT_STOP_RESPONSE: PromptResponse = { stopReason: "end_turn" };
@@ -145,6 +148,10 @@ class PreprogrammedAcpClient extends DisposableBase implements AcpClient {
   async createSession(
     cwd: string,
     _mcpServers: AgentRegistryEntry["mcpServers"],
+    _settings?: {
+      thinkingModeEnabled?: boolean;
+      thinkingConfig?: ThinkConfig;
+    },
   ): Promise<NewSessionResponse> {
     await this.ensureReady();
 
@@ -307,6 +314,24 @@ class PreprogrammedAcpClient extends DisposableBase implements AcpClient {
     }
   }
 
+  async setThink(
+    _sessionId: string,
+    enabled: boolean,
+    config?: ThinkConfig,
+  ): Promise<{
+    success: boolean;
+    currentThinkEnabled: boolean;
+    currentThinkConfig?: string;
+    unsupported?: boolean;
+    errorMessage?: string;
+  }> {
+    return {
+      success: true,
+      currentThinkEnabled: enabled,
+      currentThinkConfig: config,
+    };
+  }
+
   async setSessionConfigOption(
     _sessionId: string,
     configId: string,
@@ -356,6 +381,38 @@ class PreprogrammedAcpClient extends DisposableBase implements AcpClient {
 
   async listNativeSessions(_cursor?: string): Promise<ListSessionsResponse> {
     return { sessions: [] };
+  }
+
+  async readTextFile(params: { uri: string }): Promise<{ content: string }> {
+    const uri = vscode.Uri.parse(params.uri);
+    const openDoc = vscode.workspace.textDocuments.find(
+      (doc) => doc.uri.fsPath === uri.fsPath,
+    );
+    if (openDoc) {
+      return { content: openDoc.getText() };
+    }
+    const bytes = await vscode.workspace.fs.readFile(uri);
+    return { content: new TextDecoder().decode(bytes) };
+  }
+
+  async writeTextFile(params: { uri: string; content: string }): Promise<void> {
+    const uri = vscode.Uri.parse(params.uri);
+    const openDoc = vscode.workspace.textDocuments.find(
+      (doc) => doc.uri.fsPath === uri.fsPath,
+    );
+    if (openDoc && !openDoc.isDirty) {
+      const fullRange = new vscode.Range(
+        openDoc.positionAt(0),
+        openDoc.positionAt(openDoc.getText().length),
+      );
+      const edit = new vscode.WorkspaceEdit();
+      edit.replace(uri, fullRange, params.content);
+      await vscode.workspace.applyEdit(edit);
+      await openDoc.save();
+    } else {
+      const bytes = new TextEncoder().encode(params.content);
+      await vscode.workspace.fs.writeFile(uri, bytes);
+    }
   }
 
   dispose(): void {

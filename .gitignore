@@ -4,3 +4,6 @@ out
 .vscode-test
 .memory
 .DS_Store
+/.agents
+/.oma
+*.log

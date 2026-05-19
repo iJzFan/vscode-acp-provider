@@ -1,8 +1,10 @@
 # Codebase Knowledge: vscode-acp-provider
 
-> Last updated: 2026-03-04  
+> Last updated: 2026-05-14  
 > Generated from codebase exploration of `src/` directory.
-> Reflects migration to VS Code engine `^1.110.0` and `ChatSessionItemController` API.
+> Reflects migration to VS Code engine `^1.120.0`, `ChatSessionItemController` API, and shared MCP/plugin compatibility work.
+
+Related roadmap: `docs/acp-schema-driven-roadmap.md`
 
 ---
 
@@ -61,6 +63,22 @@ this.readyPromise = null;
 ---
 
 ## 2. Session Management
+
+### MCP Resolution Order at Session Bootstrap
+
+Before `client.createSession()` or `client.loadSession()` runs, `SessionManager.getSessionMcpServers()` now resolves MCP servers in this order:
+
+1. active VS Code profile `mcp.json`
+2. workspace `.vscode/mcp.json`
+3. imported plugin MCP servers
+4. explicit `acpClient.agents.<id>.mcpServers`
+
+Later sources override earlier ones by MCP server name. The controlling files are:
+
+- `src/mcpConfigImporter.ts` for profile/workspace MCP import
+- `src/pluginDiscovery.ts` for official plugin discovery paths and workspace plugin hints
+- `src/pluginCompatibility.ts` for plugin `.mcp.json` parsing and root-token expansion
+- `src/acpSessionManager.ts` for precedence merge and bootstrap logging
 
 ### Entry Point: `SessionManager.createOrGet(resource)` — `src/acpSessionManager.ts`
 

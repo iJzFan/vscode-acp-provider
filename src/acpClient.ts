@@ -19,6 +19,7 @@ import {
   SessionModelState,
   SessionModeState,
   McpServer,
+  McpServerHttp,
   McpServerStdio,
   SessionNotification,
   SetSessionConfigOptionRequest,
@@ -29,7 +30,11 @@ import { ChildProcessWithoutNullStreams, spawn } from "node:child_process";
 import { Readable, Writable } from "node:stream";
 import * as vscode from "vscode";
 import { AgentRegistryEntry } from "./agentRegistry";
-import type { AcpMcpServerConfiguration } from "./types";
+import {
+  extractReadableErrorMessage,
+  type AcpMcpServerConfiguration,
+  type ThinkConfig,
+} from "./types";
 import { DisposableBase } from "./disposables";
 
 export interface AcpPermissionHandler {
@@ -40,10 +45,10 @@ export interface AcpPermissionHandler {
 
 const CLIENT_CAPABILITIES: ClientCapabilities = {
   fs: {
-    readTextFile: false,
-    writeTextFile: false,
+    readTextFile: true,
+    writeTextFile: true,
   },
-  terminal: false,
+  terminal: true,
 };
 
 const CLIENT_INFO = {
@@ -61,6 +66,10 @@ export interface AcpClient extends Client, vscode.Disposable {
   createSession(
     cwd: string,
     mcpServers: AgentRegistryEntry["mcpServers"],
+    settings?: {
+      thinkingModeEnabled?: boolean;
+      thinkingConfig?: ThinkConfig;
+    },
   ): Promise<NewSessionResponse>;
   getSupportedModelState(): SessionModelState | null;
   getSupportedModeState(): SessionModeState | null;
@@ -77,6 +86,17 @@ export interface AcpClient extends Client, vscode.Disposable {
   cancel(sessionId: string): Promise<void>;
   changeMode(sessionId: string, modeId: string): Promise<void>;
   changeModel(sessionId: string, modelId: string): Promise<void>;
+  setThink(
+    sessionId: string,
+    enabled: boolean,
+    config?: ThinkConfig,
+  ): Promise<{
+    success: boolean;
+    currentThinkEnabled: boolean;
+    currentThinkConfig?: string;
+    unsupported?: boolean;
+    errorMessage?: string;
+  }>;
   setSessionConfigOption(
     sessionId: string,
     configId: string,
@@ -89,6 +109,8 @@ export interface AcpClient extends Client, vscode.Disposable {
     answers: Record<string, unknown>,
   ): Promise<void>;
   listNativeSessions(cursor?: string): Promise<ListSessionsResponse>;
+  readTextFile(params: { uri: string }): Promise<{ content: string }>;
+  writeTextFile(params: { uri: string; content: string }): Promise<void>;
 }
 
 export function createAcpClient(
@@ -164,6 +186,10 @@ class AcpClientImpl extends DisposableBase implements AcpClient {
   async createSession(
     cwd: string,
     mcpServers: AgentRegistryEntry["mcpServers"],
+    settings?: {
+      thinkingModeEnabled?: boolean;
+      thinkingConfig?: ThinkConfig;
+    },
   ): Promise<NewSessionResponse> {
     try {
       await this.ensureReady("new_session");
@@ -171,9 +197,17 @@ class AcpClientImpl extends DisposableBase implements AcpClient {
       if (!this.connection) {
         throw new Error("ACP connection is not ready");
       }
-      const request: NewSessionRequest = {
+      const request: NewSessionRequest & {
+        _meta?: {
+          settings?: {
+            thinkingModeEnabled?: boolean;
+            thinkingConfig?: ThinkConfig;
+          };
+        };
+      } = {
         cwd,
         mcpServers: serializeMcpServers(mcpServers),
+        _meta: settings ? { settings } : undefined,
       };
       const response: NewSessionResponse =
         await this.connection.newSession(request);
@@ -344,6 +378,55 @@ class AcpClientImpl extends DisposableBase implements AcpClient {
     }
   }
 
+  async setThink(
+    sessionId: string,
+    enabled: boolean,
+    config?: ThinkConfig,
+  ): Promise<{
+    success: boolean;
+    currentThinkEnabled: boolean;
+    currentThinkConfig?: string;
+    unsupported?: boolean;
+    errorMessage?: string;
+  }> {
+    await this.ensureReady(this.mode);
+    if (!this.connection) {
+      throw new Error("ACP connection is not ready");
+    }
+
+    try {
+      const response = await this.connection.extMethod("session/set_think", {
+        sessionId,
+        thinkEnabled: enabled,
+        thinkConfig: config,
+      });
+      return response as {
+        success: boolean;
+        currentThinkEnabled: boolean;
+        currentThinkConfig?: string;
+        unsupported?: boolean;
+        errorMessage?: string;
+      };
+    } catch (error) {
+      const message = extractReadableErrorMessage(error);
+      if (isUnsupportedSetThinkError(message)) {
+        this.logChannel.warn(
+          `session/set_think is unsupported by agent ${this.agent.id}; falling back to startup-only thinking only. Details: ${message}`,
+        );
+        return {
+          success: false,
+          currentThinkEnabled: enabled,
+          currentThinkConfig: config,
+          unsupported: true,
+          errorMessage: message,
+        };
+      }
+
+      this.logChannel.error(`Failed to set think mode: ${message}`);
+      throw error;
+    }
+  }
+
   getConfigOptions(): SessionConfigOption[] {
     return this.configOptions;
   }
@@ -398,6 +481,38 @@ class AcpClientImpl extends DisposableBase implements AcpClient {
     return this.connection.unstable_listSessions({ cursor });
   }
 
+  async readTextFile(params: { uri: string }): Promise<{ content: string }> {
+    const uri = vscode.Uri.parse(params.uri);
+    const openDoc = vscode.workspace.textDocuments.find(
+      (doc) => doc.uri.fsPath === uri.fsPath,
+    );
+    if (openDoc) {
+      return { content: openDoc.getText() };
+    }
+    const bytes = await vscode.workspace.fs.readFile(uri);
+    return { content: new TextDecoder().decode(bytes) };
+  }
+
+  async writeTextFile(params: { uri: string; content: string }): Promise<void> {
+    const uri = vscode.Uri.parse(params.uri);
+    const openDoc = vscode.workspace.textDocuments.find(
+      (doc) => doc.uri.fsPath === uri.fsPath,
+    );
+    if (openDoc && !openDoc.isDirty) {
+      const fullRange = new vscode.Range(
+        openDoc.positionAt(0),
+        openDoc.positionAt(openDoc.getText().length),
+      );
+      const edit = new vscode.WorkspaceEdit();
+      edit.replace(uri, fullRange, params.content);
+      await vscode.workspace.applyEdit(edit);
+      await openDoc.save();
+    } else {
+      const bytes = new TextEncoder().encode(params.content);
+      await vscode.workspace.fs.writeFile(uri, bytes);
+    }
+  }
+
   async dispose(): Promise<void> {
     await this.stopProcess();
     super.dispose();
@@ -408,6 +523,9 @@ class AcpClientImpl extends DisposableBase implements AcpClient {
       return;
     }
     const args = Array.from(this.agent.args ?? []);
+    this.logChannel.info(
+      `[acp:${this.agent.id}] Starting ACP agent process: ${this.agent.command}${args.length ? ` ${args.join(" ")}` : ""}`,
+    );
     const agentProc = spawn(this.agent.command, args, {
       cwd: this.agent.cwd ?? process.cwd(),
       env: {
@@ -415,6 +533,7 @@ class AcpClientImpl extends DisposableBase implements AcpClient {
         ...this.agent.env,
       },
       stdio: ["pipe", "pipe", "pipe"],
+      shell: true,
     });
     agentProc.stderr?.on("data", (data) => {
       this.logChannel.debug(`agent:${this.agent.id} ${data.toString().trim()}`);
@@ -426,10 +545,11 @@ class AcpClientImpl extends DisposableBase implements AcpClient {
       this._onDidStop.fire();
     });
     agentProc.on("error", (error) => {
-      this.logChannel.debug(
-        `agent:${this.agent.id} failed to start: ${error instanceof Error ? error.message : String(error)}`,
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      this.logChannel.error(
+        `agent:${this.agent.id} failed to start: ${errorMessage}`,
       );
-      // todo: emit agent proc error upstream
+      this._onDidStop.fire();
     });
     this.agentProcess = agentProc;
   }
@@ -454,6 +574,21 @@ class AcpClientImpl extends DisposableBase implements AcpClient {
       clientInfo: CLIENT_INFO,
     });
     this.agentCapabilities = initResponse.agentCapabilities;
+    this.logChannel.info(
+      `[acp:${this.agent.id}] ACP initialize negotiated protocol v${initResponse.protocolVersion}; clientCapabilities=${JSON.stringify(
+        CLIENT_CAPABILITIES,
+      )}; agentCapabilities=${JSON.stringify(initResponse.agentCapabilities)}; authMethods=${formatAuthMethodSummary(initResponse)}`,
+    );
+    const disabledClientCapabilities = getDisabledClientCapabilitySummary(
+      CLIENT_CAPABILITIES,
+    );
+    if (disabledClientCapabilities.length) {
+      this.logChannel.info(
+        `[acp:${this.agent.id}] Client capability caveat: ${disabledClientCapabilities.join(
+          ", ",
+        )}. Agents that rely on these ACP client APIs may not surface full terminal/file UX in this extension yet.`,
+      );
+    }
     this._onDidStart.fire();
     this.mode = mode;
   }
@@ -477,23 +612,43 @@ function serializeMcpServers(
     return [];
   }
   return mcpServers
-    .map(serializeStdioServer)
-    .filter((value): value is McpServerStdio => value !== null);
+    .map(serializeMcpServer)
+    .filter((value): value is McpServer => value !== null);
+}
+
+function serializeMcpServer(
+  config: AcpMcpServerConfiguration,
+): McpServer | null {
+  switch (config.type) {
+    case "http":
+      return serializeHttpServer(config);
+    case "stdio":
+      return serializeStdioServer(config);
+    default:
+      return null;
+  }
 }
 
 function serializeStdioServer(
-  config: AcpMcpServerConfiguration,
-): McpServerStdio | null {
-  if (config.type !== "stdio") {
-    return null;
-  }
-
+  config: Extract<AcpMcpServerConfiguration, { type: "stdio" }>,
+): McpServerStdio {
   return {
     name: config.name,
     command: config.command,
     args: Array.from(config.args ?? []),
     env: serializeEnv(config.env),
   } satisfies McpServerStdio;
+}
+
+function serializeHttpServer(
+  config: Extract<AcpMcpServerConfiguration, { type: "http" }>,
+): McpServer {
+  return {
+    type: "http",
+    name: config.name,
+    url: config.url,
+    headers: serializeHeaders(config.headers),
+  } satisfies McpServer;
 }
 
 function serializeEnv(
@@ -503,4 +658,59 @@ function serializeEnv(
     return [];
   }
   return Object.entries(env).map(([name, value]) => ({ name, value }));
+}
+
+function serializeHeaders(
+  headers: Record<string, string> | undefined,
+): McpServerHttp["headers"] {
+  if (!headers) {
+    return [];
+  }
+  return Object.entries(headers).map(([name, value]) => ({ name, value }));
+}
+
+function isUnsupportedSetThinkError(message: string): boolean {
+  const normalized = message.toLowerCase();
+  const mentionsMethod =
+    normalized.includes("session/set_think") ||
+    normalized.includes("set_think");
+  const indicatesUnsupported =
+    normalized.includes("method not found") ||
+    normalized.includes("unknown method") ||
+    normalized.includes("unsupported") ||
+    normalized.includes("not implemented") ||
+    normalized.includes("-32601");
+
+  return mentionsMethod && indicatesUnsupported;
+}
+
+function formatAuthMethodSummary(response: InitializeResponse): string {
+  if (!response.authMethods?.length) {
+    return "none";
+  }
+
+  return response.authMethods
+    .map((method) => `${method.id}:${method.name}`)
+    .join(", ");
+}
+
+function getDisabledClientCapabilitySummary(
+  capabilities: ClientCapabilities,
+): string[] {
+  const disabled: string[] = [];
+  const fileSystemCapabilities = capabilities.fs;
+
+  if (!capabilities.terminal) {
+    disabled.push("terminal/* disabled");
+  }
+
+  if (!fileSystemCapabilities?.readTextFile) {
+    disabled.push("fs/read_text_file disabled");
+  }
+
+  if (!fileSystemCapabilities?.writeTextFile) {
+    disabled.push("fs/write_text_file disabled");
+  }
+
+  return disabled;
 }

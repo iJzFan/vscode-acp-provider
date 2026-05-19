@@ -116,6 +116,7 @@ export function createTestAcpClientWithScenarios(
   addResumeSessionScenario(config);
   addAskQuestionScenario(config);
   addToolCallPatchFile(config);
+  addAvailableCommandsScenario(config);
   addModeSwitchingScenario(config);
   addExitPlanModePermissionScenario(config);
   addUsageUpdateScenario(config);
@@ -534,6 +535,64 @@ function addToolCallPatchFile(config: PreprogrammedConfig) {
             content: {
               type: "text",
               text: "I've added a new heading to patched.md",
+            },
+          },
+        },
+      ],
+    },
+  });
+}
+
+function addAvailableCommandsScenario(config: PreprogrammedConfig) {
+  config.promptPrograms?.push({
+    promptText: "load commands",
+    notifications: {
+      prompt: [
+        {
+          sessionId: "test-session-id",
+          update: {
+            sessionUpdate: "available_commands_update",
+            availableCommands: [
+              {
+                name: "oma--oh-my-auggie:oma-plan",
+                description:
+                  "Strategic planning with analyst and architect review.",
+                input: {
+                  hint: "[topic]",
+                },
+              },
+              {
+                name: "oma--oh-my-auggie:oma-release",
+                description:
+                  "Automated release workflow — versioning, changelog, tagging, and publication.",
+                input: {
+                  hint: "[release target]",
+                },
+              },
+              {
+                name: "opencode:review-pr",
+                description: "Review the current workspace changes or PR diff.",
+                input: {
+                  hint: "[scope]",
+                },
+              },
+              {
+                name: "opencode:fix-tests",
+                description: "Investigate and fix the current failing tests.",
+                input: {
+                  hint: "[test selector]",
+                },
+              },
+            ],
+          },
+        },
+        {
+          sessionId: "test-session-id",
+          update: {
+            sessionUpdate: "agent_message_chunk",
+            content: {
+              type: "text",
+              text: "Loaded namespaced ACP commands. Type `/` to browse them or run `/?` to render the command list.",
             },
           },
         },

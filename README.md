@@ -9,30 +9,77 @@
 
 > Experimental
 
+Minimum supported version: VS Code Insiders 1.120.0 with proposed chat APIs enabled for `org-gap.vscode-acp-client`.
+
 Native chat session provider for VS Code that connects external agent CLIs through the Agent Client Protocol (ACP).
 
 ## Features
 
 - Adds support for ACP agents in VS Code as external agents
+- Surfaces ACP `availableCommands` as `/`-triggered chat command completions after the agent reports them, while keeping `/?` as an explicit command list and matching namespaced commands by either full name or short alias
+- Logs ACP tool lifecycle summaries to the output channel and renders touched-file summaries in chat when tool calls report file locations or diffs
+- Imports MCP servers from the active VS Code profile, workspace `.vscode/mcp.json`, and compatible agent plugins
+- Adds plan follow-up actions in chat so users can continue, request changes, or ask for more detail without leaving the session
+- Adds local risk hints for permission prompts and context-window usage warnings for long ACP sessions
 - Supports
   - [OpenCode](https://opencode.ai)
   - [cagent](https://docs.docker.com/ai/cagent/)
   - [Codex CLI](https://github.com/openai/codex) through [https://github.com/zed-industries/codex-acp](https://github.com/zed-industries/codex-acp)
   - [Gemini CLI](https://geminicli.com)
+  - [Auggie CLI](https://docs.augmentcode.com/cli/overview) via `auggie --acp`
 
 ## Configuration
 
-Add ACP agents under the `acpClient.agents` setting (User or Workspace) to surface them in the chat session picker. You can also provide optional MCP tool connections via `mcpServers` so the agent automatically connects to additional tools when sessions start. **MCP support is currently limited to `stdio` transports**, so each entry must include the command to launch the tool and any arguments or environment variables it needs:
+Add ACP agents under the `acpClient.agents` setting (User or Workspace) to surface them in the chat session picker. You can also provide optional MCP tool connections via `mcpServers` so the agent automatically connects to additional tools when sessions start.
+
+If you are using Augment, configure **Auggie directly** instead of routing it through a Claude profile. Augment's official ACP documentation recommends launching Auggie with `--acp`, for example:
+
+```json
+"acpClient.agents": {
+  "auggie": {
+    "label": "Auggie",
+    "command": "auggie",
+    "args": [
+      "--acp"
+    ],
+    "enabled": true
+  }
+}
+```
+
+Before starting an ACP session with Auggie, make sure the CLI is installed and authenticated (`auggie login`). On Windows, `command: "auggie"` works when the Auggie npm/global install location is already on `PATH`.
+
+To refresh Auggie's custom-command catalog without editing settings by hand, run the Command Palette action `ACP: Import Auggie manual commands`. The extension runs `auggie command help`, parses the command list, and stores the results under `acpClient.agents.auggie.manualCommands` in user settings.
+
+New sessions can also apply optional defaults per agent:
+
+- `defaultMode`: preferred ACP mode for newly created sessions
+- `defaultModel`: preferred ACP model for newly created sessions
+- `defaultThinkingEffort`: one of `off`, `think`, `megathink`, or `ultrathink`
+
+Inside the chat session UI, `Thinking` appears as a regular session option again. Agents that support `session/set_think` can switch thinking effort live; agents that do not will keep the selected value as the startup preference for the session.
+
+The ACP output channel now logs the negotiated ACP capabilities for every agent startup. This makes it easier to see whether an agent advertised features like `available_commands_update`, richer prompt capabilities, or MCP transports, and it also calls out when this extension is still running with ACP client capabilities like `terminal/*` or `fs/*` disabled.
+
+ACP-local `mcpServers` entries currently support both `stdio` and `http` transports. When an ACP session starts, the extension also imports compatible servers from the active VS Code profile `mcp.json`, the workspace-level `.vscode/mcp.json`, and compatible agent plugins. If the same server name is defined multiple times, precedence is:
+
+1. `acpClient.agents.<id>.mcpServers`
+2. imported plugin MCP servers
+3. workspace `.vscode/mcp.json`
+4. active profile `mcp.json`
 
 ```json
 "acpClient.agents": {
   "cagent": {
-    "title": "Docker cagent",
+    "label": "Docker cagent",
     "command": "/opt/bin/cagent",
     "args": [
       "acp",
       "/agents/coding.yaml"
     ],
+    "defaultMode": "code",
+    "defaultModel": "gpt-5",
+    "defaultThinkingEffort": "megathink",
     "mcpServers": [
       {
         "type": "stdio",
@@ -42,12 +89,20 @@ Add ACP agents under the `acpClient.agents` setting (User or Workspace) to surfa
         "env": {
           "WORKSPACE": "${workspaceFolder}"
         }
+      },
+      {
+        "type": "http",
+        "name": "remote-tools",
+        "url": "http://localhost:3000",
+        "headers": {
+          "Authorization": "Bearer ${input:tool-token}"
+        }
       }
     ],
     "enabled": false
   },
   "opencode": {
-    "title": "OpenCode Agent",
+    "label": "OpenCode Agent",
     "command": "/opt/bin/opencode",
     "args": [
       "acp"
@@ -58,9 +113,47 @@ Add ACP agents under the `acpClient.agents` setting (User or Workspace) to surfa
 }
 ```
 
+Workspace MCP import follows the official VS Code `mcp.json` shape and currently recognizes `stdio` and `http` server definitions under `.vscode/mcp.json`:
+
+```json
+{
+  "servers": {
+    "github": {
+      "type": "http",
+      "url": "https://api.githubcopilot.com/mcp"
+    },
+    "playwright": {
+      "command": "npx",
+      "args": ["-y", "@microsoft/mcp-server-playwright"]
+    }
+  }
+}
+```
+
+The workspace import is session-scoped: the file is read when ACP creates or reloads a session. Changes to `.vscode/mcp.json` apply to new or reloaded ACP sessions.
+
+The same session-scoped import logic also reads the active VS Code profile `mcp.json`, so ACP can reuse the same user-level MCP definitions that the editor already uses for chat.
+
+## Plugin Compatibility
+
+ACP imports MCP servers from compatible agent plugins discovered in these official locations:
+
+- paths listed in `chat.pluginLocations`
+- VS Code installed agent plugins
+- GitHub Copilot CLI installed plugins under `~/.copilot/installed-plugins/`
+
+Supported plugin manifest locations follow the official order:
+
+1. `.plugin/plugin.json`
+2. `plugin.json`
+3. `.github/plugin/plugin.json`
+4. `.claude-plugin/plugin.json`
+
+For plugin MCP configs, ACP currently imports MCP servers only. Plugin hooks, skills, custom agents, and slash commands are surfaced in logs as compatibility metadata but are not executed by this extension. Claude-format `${CLAUDE_PLUGIN_ROOT}` and OpenPlugin `${PLUGIN_ROOT}` tokens are expanded when importing plugin MCP servers.
+
 ## Installing
 
-At the moment the extension is under development, so this is not yet published into VSCode market place. But if you want to try out as it is you can install the extension by building it locally and installing into your **VSCode Insider** since this extension relies on some of the experimental APIs only available in VSCode Insider.
+At the moment the extension is under development, so this is not yet published into VSCode market place. If you want to try it out locally, use **VS Code Insiders 1.120.0 or newer** and enable the proposed APIs for this extension, because the chat session integration depends on experimental chat APIs that are not available in the regular stable build.
 
 To build the extension locally you can follow these steps:
 
@@ -98,3 +191,9 @@ To build the extension locally you can follow these steps:
 
 After configuring you should see the configured agents in the chat session picker. Select one to start a new chat session with the external agent.
 ![Chat Session Picker](docs/readme/picker.png)
+
+Once an ACP session reports `availableCommands`, type `/` in the chat input to browse command completions for that agent. You can still run `/?` to render the full ACP command list inside the chat transcript.
+
+For namespaced ACP commands such as `oma--oh-my-auggie:oma-plan` or `opencode:review-pr`, slash completion now matches both the full canonical command name and the short tail after `:`. The completion list shows the short alias for readability, but inserting a command still uses the full canonical ACP command so Auggie, OpenCode, and similar agents receive exactly the identifier they advertised.
+
+Note that ACP mode is not identical to an agent's native UI. For example, Augment documents that Auggie's ACP mode does **not** expose every interactive-mode feature, so what appears in VS Code depends on the data Auggie actually emits over ACP.

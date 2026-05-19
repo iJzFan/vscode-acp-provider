@@ -1,32 +1,42 @@
-# AGENTS.md
+# Project Guidelines
 
-## Code Explorations
+## Exploration
 
-- ALWAYS USE subagents for code explorations when they are AVAILABLE
+- ALWAYS USE subagents for code explorations when they are AVAILABLE.
 
-## Setup commands
+## Build And Release
 
-- Install deps: `npm install`
-- Compile: `npm run compile`
+- Install deps with `npm install`.
+- Must Build with `npm run compile` after every modification.
+- Must Package release artifacts with `npm run package` when a VSIX is needed.
+- Runtime target is VS Code Insiders `1.120+` with proposed chat APIs enabled.
+- Keep the Windows-safe clean script intact; do not reintroduce Unix-only `rm -rf` into release scripts.
 
-## Update Tests
+## Versioning Policy
 
-- When user requests new test scenarios, update `src/testScenarios.ts` with the new scenarios as prompted by the user.
+- Every modification must update the version in `package.json` and the corresponding entry in `CHANGELOG.md`, then run a build.
+- New feature work bumps the minor version: `x.y.z` -> `x.(y+1).0`.
+- Bug fixes, maintenance changes, and documentation-only fixes bump the patch version: `x.y.z` -> `x.y.(z+1)`.
+- If a change is packaged for distribution, ensure the generated VSIX version matches `package.json`.
 
-## New Features
+## Project Conventions
 
-- When adding new features, always make sure solutions are feasible based on vscode extension capabilities and proposed APIs.
-- When formulating solutions read through the files at https://github.com/microsoft/vscode/tree/main/src/vscode-dts to ensure proposed solutions are implementable.
-- Always take inspiration from existing popular extensions such as https://github.com/microsoft/vscode-copilot-chat.git by reading through their source code to understand how they implement similar features.
+- When user requests new test scenarios, update `src/testScenarios.ts` with the requested scenarios.
+- Keep solutions feasible against the VS Code extension API and the enabled proposed APIs.
+- For proposed chat/session features, verify behavior against the local `vscode*.d.ts` files and current VS Code API docs before implementing.
+- Preserve untitled chat-session resource normalization in `src/chatIdentifiers.ts`; changing that breaks live ACP session lookup during bootstrap.
+- Guard newer proposed runtime surfaces before using them directly in activation code.
 
-## Specifications
+## Project References
 
-- ACP (Agent Client Protocol) : https://agentclientprotocol.com/protocol/schema
-- VSCode Extension API: https://code.visualstudio.com/api/references/vscode-api
+- Architecture and current behavior: `docs/codebase-knowledge.md`
+- Compatibility plan: `docs/acp-vscode-1.120-compatibility-plan.md`
+- Forward roadmap: `docs/acp-schema-driven-roadmap.md`
+- ACP schema: https://agentclientprotocol.com/protocol/schema
+- VS Code Extension API: https://code.visualstudio.com/api/references/vscode-api
 
-## ACP Agent Reference
+## External References
 
-Following are implementations of ACP agents which can be used for exploring how agent's requests and responses looks like
-
-- [https://github.com/zed-industries/claude-agent-acp](https://github.com/zed-industries/claude-agent-acp)
-- [https://github.com/anomalyco/opencode](https://github.com/anomalyco/opencode)
+- https://github.com/microsoft/vscode-copilot-chat.git
+- https://github.com/zed-industries/claude-agent-acp
+- https://github.com/anomalyco/opencode

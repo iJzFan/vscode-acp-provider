@@ -28,8 +28,13 @@ export function decodeVscodeResource(resource: vscode.Uri): {
     throw new Error(`Invalid resource path: ${resource.toString()}`);
   }
 
-  const sessionId: string = resource.path.substring(1);
+  let sessionId: string = resource.path.substring(1);
   const isUntitled = sessionId.startsWith("untitled-");
+  if (isUntitled) {
+    // Normalize untitled resources so VS Code can keep resolving the same
+    // in-memory ACP session while the chat item is still unnamed.
+    sessionId = "untitled";
+  }
   return {
     isUntitled,
     sessionId,

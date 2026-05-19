@@ -1,7 +1,11 @@
 // SPDX-License-Identifier: Apache-2.0
 import * as vscode from "vscode";
 import { DisposableBase } from "./disposables";
-import { AcpAgentConfigurationEntry, AcpMcpServerConfiguration } from "./types";
+import {
+  AcpAgentConfigurationEntry,
+  AcpMcpServerConfiguration,
+  DefaultThinkingEffort,
+} from "./types";
 
 export type AgentRegistryEntry = AcpAgentConfigurationEntry & {
   readonly id: string;
@@ -9,6 +13,13 @@ export type AgentRegistryEntry = AcpAgentConfigurationEntry & {
   readonly args: readonly string[];
   readonly enabled: boolean;
   readonly mcpServers: readonly AcpMcpServerConfiguration[];
+  readonly manualCommands: NonNullable<
+    AcpAgentConfigurationEntry["manualCommands"]
+  >;
+  readonly skillPaths: readonly string[];
+  readonly defaultMode?: string;
+  readonly defaultModel?: string;
+  readonly defaultThinkingEffort?: DefaultThinkingEffort;
 };
 
 export class AgentRegistry extends DisposableBase {
@@ -58,6 +69,11 @@ export class AgentRegistry extends DisposableBase {
         args: entry.args ?? [],
         enabled: entry.enabled ?? true,
         mcpServers: entry.mcpServers ?? [],
+        manualCommands: entry.manualCommands ?? [],
+        skillPaths: entry.skillPaths ?? [],
+        defaultMode: entry.defaultMode,
+        defaultModel: entry.defaultModel,
+        defaultThinkingEffort: entry.defaultThinkingEffort,
       };
       this.agents.set(agentId, normalized);
     }
