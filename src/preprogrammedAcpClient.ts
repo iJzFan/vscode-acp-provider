@@ -22,6 +22,7 @@ import * as vscode from "vscode";
 import { AgentRegistryEntry } from "./agentRegistry";
 import { DisposableBase } from "./disposables";
 import { AcpClient, AcpPermissionHandler } from "./acpClient";
+import { writeTextFileWithCoordinator } from "./fileWriteCoordinator";
 import type { ThinkConfig } from "./types";
 
 const STREAM_DELAY_MS = 500;
@@ -397,22 +398,7 @@ class PreprogrammedAcpClient extends DisposableBase implements AcpClient {
 
   async writeTextFile(params: { uri: string; content: string }): Promise<void> {
     const uri = vscode.Uri.parse(params.uri);
-    const openDoc = vscode.workspace.textDocuments.find(
-      (doc) => doc.uri.fsPath === uri.fsPath,
-    );
-    if (openDoc && !openDoc.isDirty) {
-      const fullRange = new vscode.Range(
-        openDoc.positionAt(0),
-        openDoc.positionAt(openDoc.getText().length),
-      );
-      const edit = new vscode.WorkspaceEdit();
-      edit.replace(uri, fullRange, params.content);
-      await vscode.workspace.applyEdit(edit);
-      await openDoc.save();
-    } else {
-      const bytes = new TextEncoder().encode(params.content);
-      await vscode.workspace.fs.writeFile(uri, bytes);
-    }
+    await writeTextFileWithCoordinator(uri, params.content);
   }
 
   dispose(): void {

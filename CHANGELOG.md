@@ -1,3 +1,19 @@
+## [0.4.14] - 2026-05-20
+
+- Fixed ACP file writes for open editors by routing all extension-managed writes through a shared coordinator that updates the in-memory document first and then saves it, preventing the "The content of the file is newer" save conflict.
+- Stopped the diff-only chat fallback from applying second-path `textEdit` / `workspaceEdit` mutations, so file diffs stay visible in chat without auto-opening editors or racing the authoritative write pipeline.
+- Changed live and replayed diff parts to stay clickable in the chat UI instead of being forced read-only.
+- Fixed cumulative session diffs to preserve each file's earliest original content and latest final content, so the "Modified files" roll-up now shows a true original-to-final diff.
+- Updated regression tests to cover open-editor overwrites, serialized writes, and true cumulative diff aggregation.
+
+## [0.4.13] - 2026-05-20
+
+- Replaced the previous mixed ACP file-write handling with a direct `workspace.fs.writeFile` pipeline and per-URI serialization; follow-up fixes in `0.4.14` restore safe open-editor synchronization while keeping ordered writes.
+- Added per-URI write serialization so repeated writes to the same file execute in order and never race against each other.
+- Added session-level cumulative diff aggregation so the chat UI shows a rolled-up "Modified files" view across all tool calls in a session.
+- History replay now includes cumulative diff parts so resumed sessions display the latest aggregated file edits.
+- Added regression tests for write pipeline correctness and cumulative diff aggregation.
+
 ## [0.4.12] - 2026-05-20
 
 - Fixed `writeTextFile` to use `WorkspaceEdit` + `save()` for open documents instead of `fs.writeFile`, eliminating "file content is newer" errors on subsequent save and preventing content reverts.

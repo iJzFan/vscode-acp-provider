@@ -25,6 +25,7 @@ import {
   SessionModeState,
   type SessionNotification,
 } from "@agentclientprotocol/sdk";
+import { mergeToolDiffArtifacts, ToolDiffArtifact } from "./diffRendering";
 
 export class Session {
   private _status: ChatSessionStatus;
@@ -182,6 +183,12 @@ export interface AcpSessionManager extends vscode.Disposable {
     session: Session,
     args: { size: number; used: number },
   ): void;
+  recordToolDiffArtifacts(
+    sessionId: string,
+    artifacts: readonly ToolDiffArtifact[],
+  ): void;
+  getCumulativeToolDiffArtifacts(sessionId: string): ToolDiffArtifact[];
+  clearCumulativeToolDiffArtifacts(sessionId: string): void;
 }
 
 export function createAcpSessionManager(
@@ -271,6 +278,7 @@ class SessionManager extends DisposableBase implements AcpSessionManager {
   private activeSessions: Map<string, Session> = new Map();
   private availableCommands: Map<string, SurfacedCommand[]> = new Map();
   private discoveredSkills: ScannedSkill[] = [];
+  private cumulativeToolDiffs = new Map<string, Map<string, ToolDiffArtifact>>();
   private probeSession: {
     acpSessionId: string;
     modes: SessionModeState | null;
@@ -828,7 +836,39 @@ class SessionManager extends DisposableBase implements AcpSessionManager {
     this.disposeSessionClient(decoded.sessionId, session);
     this.activeSessions.delete(decoded.sessionId);
     this.availableCommands.delete(decoded.sessionId);
+    this.cumulativeToolDiffs.delete(decoded.sessionId);
     this.logger.info(`Closed session and killed process: ${decoded.sessionId}`);
+  }
+
+  recordToolDiffArtifacts(
+    sessionId: string,
+    artifacts: readonly ToolDiffArtifact[],
+  ): void {
+    let sessionMap = this.cumulativeToolDiffs.get(sessionId);
+    if (!sessionMap) {
+      sessionMap = new Map<string, ToolDiffArtifact>();
+      this.cumulativeToolDiffs.set(sessionId, sessionMap);
+    }
+    for (const artifact of artifacts) {
+      const key = artifact.fileUri.toString();
+      const existing = sessionMap.get(key);
+      sessionMap.set(
+        key,
+        existing ? mergeToolDiffArtifacts(existing, artifact) : artifact,
+      );
+    }
+  }
+
+  getCumulativeToolDiffArtifacts(sessionId: string): ToolDiffArtifact[] {
+    const sessionMap = this.cumulativeToolDiffs.get(sessionId);
+    if (!sessionMap) {
+      return [];
+    }
+    return Array.from(sessionMap.values());
+  }
+
+  clearCumulativeToolDiffArtifacts(sessionId: string): void {
+    this.cumulativeToolDiffs.delete(sessionId);
   }
 
   dispose(): void {
@@ -840,6 +880,7 @@ class SessionManager extends DisposableBase implements AcpSessionManager {
     this.probeSession = null;
     this.diskSessions?.clear();
     this.availableCommands.clear();
+    this.cumulativeToolDiffs.clear();
     this._onDidChangeSession.dispose();
     this._onDidChangeOptions.dispose();
   }

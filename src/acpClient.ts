@@ -36,6 +36,7 @@ import {
   type ThinkConfig,
 } from "./types";
 import { DisposableBase } from "./disposables";
+import { writeTextFileWithCoordinator } from "./fileWriteCoordinator";
 
 export interface AcpPermissionHandler {
   requestPermission(
@@ -495,22 +496,10 @@ class AcpClientImpl extends DisposableBase implements AcpClient {
 
   async writeTextFile(params: { uri: string; content: string }): Promise<void> {
     const uri = vscode.Uri.parse(params.uri);
-    const openDoc = vscode.workspace.textDocuments.find(
-      (doc) => doc.uri.fsPath === uri.fsPath,
-    );
-    if (openDoc && !openDoc.isDirty) {
-      const fullRange = new vscode.Range(
-        openDoc.positionAt(0),
-        openDoc.positionAt(openDoc.getText().length),
-      );
-      const edit = new vscode.WorkspaceEdit();
-      edit.replace(uri, fullRange, params.content);
-      await vscode.workspace.applyEdit(edit);
-      await openDoc.save();
-    } else {
-      const bytes = new TextEncoder().encode(params.content);
-      await vscode.workspace.fs.writeFile(uri, bytes);
-    }
+    await writeTextFileWithCoordinator(uri, params.content, {
+      logChannel: this.logChannel,
+      logPrefix: `[acp:${this.agent.id}]`,
+    });
   }
 
   async dispose(): Promise<void> {

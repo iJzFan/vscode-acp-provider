@@ -15,7 +15,11 @@ import {
   isTerminalToolInvocation,
   resolveUri,
 } from "./chatRenderingUtils";
-import { collectToolDiffArtifacts, createToolDiffPart } from "./diffRendering";
+import {
+  collectToolDiffArtifacts,
+  createToolDiffPart,
+  mergeToolDiffArtifacts,
+} from "./diffRendering";
 import { currentWorkspaceRoot } from "./types";
 
 type ParsedUserMessage = {
@@ -38,6 +42,7 @@ export class TurnBuilder {
     }
   >();
   private readonly questionToolCalls = new Set<string>();
+  private readonly cumulativeDiffArtifacts = new Map<string, import("./diffRendering").ToolDiffArtifact>();
 
   constructor(
     private readonly participantId: string,
@@ -99,6 +104,14 @@ export class TurnBuilder {
   getTurns(): Array<vscode.ChatRequestTurn2 | vscode.ChatResponseTurn2> {
     this.flushPendingUserMessage();
     this.flushPendingAgentMessage();
+    if (this.cumulativeDiffArtifacts.size > 0) {
+      const cumulativePart = createToolDiffPart(Array.from(this.cumulativeDiffArtifacts.values()));
+      if (cumulativePart) {
+        cumulativePart.title = "Modified files";
+        this.currentAgentParts.push(cumulativePart);
+        this.flushPendingAgentMessage();
+      }
+    }
     return [...this.turns];
   }
 
@@ -111,6 +124,7 @@ export class TurnBuilder {
     this.turns = [];
     this.toolCallParts.clear();
     this.questionToolCalls.clear();
+    this.cumulativeDiffArtifacts.clear();
   }
 
   private captureUserMessageChunk(content: ContentBlock): void {
@@ -205,9 +219,17 @@ export class TurnBuilder {
       return;
     }
 
-    const diffPart = createToolDiffPart(
-      collectToolDiffArtifacts(update, currentWorkspaceRoot()),
-    );
+    const artifacts = collectToolDiffArtifacts(update, currentWorkspaceRoot());
+    for (const artifact of artifacts) {
+      const key = artifact.fileUri.toString();
+      const existing = this.cumulativeDiffArtifacts.get(key);
+      this.cumulativeDiffArtifacts.set(
+        key,
+        existing ? mergeToolDiffArtifacts(existing, artifact) : artifact,
+      );
+    }
+
+    const diffPart = createToolDiffPart(artifacts);
     if (diffPart) {
       this.currentAgentParts.push(diffPart);
     }

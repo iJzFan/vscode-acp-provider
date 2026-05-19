@@ -683,7 +683,7 @@ export class AcpChatParticipant extends DisposableBase {
         const handled = this.handleFileEditToolCalls(info, update, response);
         if (!handled) {
           // fallback to file diffs
-          this.handleDiffToolContents(update, response);
+          this.handleDiffToolContents(update, response, session);
         }
 
         this.toolInvocations.delete(update.toolCallId);
@@ -1052,48 +1052,11 @@ export class AcpChatParticipant extends DisposableBase {
   private handleDiffToolContents(
     update: ToolCallUpdate,
     stream: vscode.ChatResponseStream,
+    session: Session,
   ): void {
     const diffArtifacts = collectToolDiffArtifacts(update, currentWorkspaceRoot());
-    for (const artifact of diffArtifacts) {
-      if (artifact.hasOriginal && artifact.hasModified && !artifact.isDeletion) {
-        stream.textEdit(
-          artifact.fileUri,
-          vscode.TextEdit.replace(
-            this.getFullTextRange(artifact.oldText),
-            artifact.newText,
-          ),
-        );
-        stream.textEdit(artifact.fileUri, true);
-      } else if (!artifact.hasOriginal && artifact.hasModified) {
-        stream.workspaceEdit([{ newResource: artifact.fileUri }]);
-        if (artifact.newText) {
-          stream.textEdit(
-            artifact.fileUri,
-            vscode.TextEdit.insert(new vscode.Position(0, 0), artifact.newText),
-          );
-          stream.textEdit(artifact.fileUri, true);
-        }
-      } else if (artifact.isDeletion) {
-        stream.workspaceEdit([{ oldResource: artifact.fileUri }]);
-      }
-    }
-
+    this.sessionManager.recordToolDiffArtifacts(session.acpSessionId, diffArtifacts);
     pushToolDiffPart(stream, diffArtifacts);
-  }
-
-  private getFullTextRange(text: string): vscode.Range {
-    if (!text) {
-      return new vscode.Range(
-        new vscode.Position(0, 0),
-        new vscode.Position(0, 0),
-      );
-    }
-    const lines = text.split("\n");
-    const lastLine = lines[lines.length - 1] ?? "";
-    return new vscode.Range(
-      new vscode.Position(0, 0),
-      new vscode.Position(lines.length - 1, lastLine.length),
-    );
   }
 
   private handleFileEditToolCalls(

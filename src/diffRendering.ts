@@ -19,6 +19,32 @@ export type ToolDiffArtifact = {
   newText: string;
 };
 
+export function mergeToolDiffArtifacts(
+  existing: ToolDiffArtifact,
+  incoming: ToolDiffArtifact,
+): ToolDiffArtifact {
+  const preservedOriginalUri = existing.hasOriginal
+    ? existing.originalUri
+    : undefined;
+  const preservedOldText = existing.oldText;
+  const preservedHasOriginal = existing.hasOriginal;
+
+  return {
+    fileUri: incoming.fileUri,
+    originalUri: preservedOriginalUri,
+    modifiedUri: incoming.hasModified ? incoming.modifiedUri : undefined,
+    ...buildDiffStats(
+      preservedHasOriginal ? preservedOldText : undefined,
+      incoming.hasModified ? incoming.newText : undefined,
+    ),
+    hasOriginal: preservedHasOriginal,
+    hasModified: incoming.hasModified,
+    isDeletion: preservedHasOriginal && !incoming.hasModified,
+    oldText: preservedOldText,
+    newText: incoming.newText,
+  };
+}
+
 export function collectToolDiffArtifacts(
   update: DiffToolUpdate,
   workspaceRoot: vscode.Uri | undefined,
@@ -85,6 +111,7 @@ export function collectToolDiffArtifacts(
 
 export function createToolDiffPart(
   artifacts: readonly ToolDiffArtifact[],
+  readOnly = false,
 ): vscode.ChatResponseMultiDiffPart | undefined {
   if (!artifacts.length) {
     return undefined;
@@ -99,15 +126,16 @@ export function createToolDiffPart(
       removed: artifact.removed,
     })),
     vscode.l10n.t("File edits"),
-    true,
+    readOnly,
   );
 }
 
 export function pushToolDiffPart(
   stream: Pick<vscode.ChatResponseStream, "push">,
   artifacts: readonly ToolDiffArtifact[],
+  readOnly = false,
 ): void {
-  const diffPart = createToolDiffPart(artifacts);
+  const diffPart = createToolDiffPart(artifacts, readOnly);
   if (diffPart) {
     stream.push(diffPart);
   }
