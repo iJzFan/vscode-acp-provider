@@ -37,6 +37,7 @@ import {
 } from "./types";
 import { DisposableBase } from "./disposables";
 import { writeTextFileWithCoordinator } from "./fileWriteCoordinator";
+import { resolveExternalEditsForUri } from "./externalEditTracker";
 
 export interface AcpPermissionHandler {
   requestPermission(
@@ -500,6 +501,12 @@ class AcpClientImpl extends DisposableBase implements AcpClient {
       logChannel: this.logChannel,
       logPrefix: `[acp:${this.agent.id}]`,
     });
+    const resolvedCount = resolveExternalEditsForUri(uri);
+    if (resolvedCount > 0) {
+      this.logChannel.debug(
+        `[acp:${this.agent.id}] Resolved ${resolvedCount} tracked edit callback(s) after writeTextFile completed for ${uri.toString()}`,
+      );
+    }
   }
 
   async dispose(): Promise<void> {

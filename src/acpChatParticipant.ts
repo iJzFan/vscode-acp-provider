@@ -27,7 +27,12 @@ import {
 import { AcpSessionManager, Session } from "./acpSessionManager";
 import { buildStructuredCommandPrompt } from "./chatCommandSerialization";
 import { DisposableBase } from "./disposables";
-import { collectToolDiffArtifacts, pushToolDiffPart } from "./diffRendering";
+import {
+  collectToolDiffArtifacts,
+  createToolDiffPart,
+  pushToolDiffPart,
+} from "./diffRendering";
+import { registerExternalEdit } from "./externalEditTracker";
 import { PermissionPromptManager } from "./permissionPrompts";
 import { Tracer } from "./tracer";
 import {
@@ -96,7 +101,13 @@ export class AcpChatParticipant extends DisposableBase {
     | vscode.ChatParticipantToolToken
     | undefined;
 
-  private externalEditorCallbacks = new Map<string, ResolvableCallback[]>();
+  private externalEditorCallbacks = new Map<
+    string,
+    {
+      callbacks: ResolvableCallback[];
+      unregisters: Array<() => void>;
+    }
+  >();
 
   private provideCommandCompletionItems(
     query: string,
@@ -337,6 +348,8 @@ export class AcpChatParticipant extends DisposableBase {
         return;
       }
 
+      this.renderFinalCumulativeDiff(response, session);
+
       session.markAsCompleted();
       if (context.chatSessionContext.isUntitled) {
         session.title =
@@ -367,8 +380,9 @@ export class AcpChatParticipant extends DisposableBase {
       subscription.dispose();
       this.toolInvocations.clear();
       this.questionToolCalls.clear();
-      for (const callbacks of this.externalEditorCallbacks.values()) {
-        callbacks.forEach((c) => c.resolve());
+      for (const trackedExternalEdit of this.externalEditorCallbacks.values()) {
+        trackedExternalEdit.callbacks.forEach((callback) => callback.resolve());
+        trackedExternalEdit.unregisters.forEach((unregister) => unregister());
       }
       this.externalEditorCallbacks.clear();
 
@@ -389,6 +403,8 @@ export class AcpChatParticipant extends DisposableBase {
       request.toolReferences,
       request.command,
     );
+
+    this.appendEditedFileEventBlocks(blocks, request);
 
     return blocks;
   }
@@ -465,6 +481,32 @@ export class AcpChatParticipant extends DisposableBase {
     }
   }
 
+  private appendEditedFileEventBlocks(
+    blocks: ContentBlock[],
+    request: vscode.ChatRequest,
+  ): void {
+    const editedFileEvents = (
+      request as vscode.ChatRequest & {
+        editedFileEvents?: readonly {
+          uri: vscode.Uri;
+          eventKind: number;
+        }[];
+      }
+    ).editedFileEvents;
+
+    if (!editedFileEvents?.length) {
+      return;
+    }
+
+    for (const event of editedFileEvents) {
+      blocks.push(
+        this.createTextBlock(
+          `Edited file event (${this.describeEditedFileEvent(event.eventKind)}): ${this.formatUri(event.uri)}`,
+        ),
+      );
+    }
+  }
+
   private formatReferenceValue(value: unknown): string | undefined {
     if (typeof value === "string") {
       return value;
@@ -507,6 +549,27 @@ export class AcpChatParticipant extends DisposableBase {
 
   private createTextBlock(text: string): ContentBlock {
     return { type: "text", text };
+  }
+
+  private describeEditedFileEvent(eventKind: number): string {
+    const eventKinds = vscode as typeof vscode & {
+      ChatRequestEditedFileEventKind?: {
+        Keep?: number;
+        Undo?: number;
+        UserModification?: number;
+      };
+    };
+
+    switch (eventKind) {
+      case eventKinds.ChatRequestEditedFileEventKind?.Keep:
+        return "keep";
+      case eventKinds.ChatRequestEditedFileEventKind?.Undo:
+        return "undo";
+      case eventKinds.ChatRequestEditedFileEventKind?.UserModification:
+        return "user_modified";
+      default:
+        return `event_${eventKind}`;
+    }
   }
 
   private isChatRequestTurn(
@@ -1059,6 +1122,20 @@ export class AcpChatParticipant extends DisposableBase {
     pushToolDiffPart(stream, diffArtifacts);
   }
 
+  private renderFinalCumulativeDiff(
+    response: vscode.ChatResponseStream,
+    session: Session,
+  ): void {
+    const diffPart = createToolDiffPart(
+      this.sessionManager.getCumulativeToolDiffArtifacts(session.acpSessionId),
+    );
+    if (!diffPart) {
+      return;
+    }
+    diffPart.title = "Modified files";
+    response.push(diffPart);
+  }
+
   private handleFileEditToolCalls(
     info: ToolInfo,
     data: ToolCall | ToolCallUpdate,
@@ -1073,12 +1150,19 @@ export class AcpChatParticipant extends DisposableBase {
         case "edit": {
           if (info.resources) {
             const callbacks: ResolvableCallback[] = [];
+            const unregisters: Array<() => void> = [];
             info.resources?.forEach((r) => {
               const callback = new ResolvableCallback();
               callbacks.push(callback);
+              unregisters.push(
+                registerExternalEdit(info.toolCallId, r, () => callback.resolve()),
+              );
               stream.externalEdit(r, callback.callback);
             });
-            this.externalEditorCallbacks.set(info.toolCallId, callbacks);
+            this.externalEditorCallbacks.set(info.toolCallId, {
+              callbacks,
+              unregisters,
+            });
             return true;
           }
           return false;
@@ -1098,9 +1182,11 @@ export class AcpChatParticipant extends DisposableBase {
     } else {
       if (this.externalEditorCallbacks.has(info.toolCallId)) {
         // resolve call callbacks
-        this.externalEditorCallbacks
-          .get(info.toolCallId)
-          ?.forEach((c) => c.resolve());
+        const trackedExternalEdit = this.externalEditorCallbacks.get(
+          info.toolCallId,
+        );
+        trackedExternalEdit?.callbacks.forEach((callback) => callback.resolve());
+        trackedExternalEdit?.unregisters.forEach((unregister) => unregister());
         this.externalEditorCallbacks.delete(info.toolCallId);
 
         return !this.hasDiffContent(data);

@@ -33,6 +33,9 @@ class AcpChatSessionItemProvider
         const modifiedItem: vscode.ChatSessionItem = {
           resource: modified.vscodeResource,
           label: modified.acpSessionId,
+          changes: this.sessionManager.getSessionChangedFiles(
+            modified.acpSessionId,
+          ),
         };
 
         if (

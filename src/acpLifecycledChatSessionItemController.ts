@@ -90,6 +90,9 @@ class LifecycledChatSessionItemController extends DisposableBase {
           // Mutate in-place — VS Code fires onDidChangeChatSessionItemState automatically
           inProgressItem.label = modified.title;
           inProgressItem.status = modified.status;
+          inProgressItem.changes = this.sessionManager.getSessionChangedFiles(
+            modified.acpSessionId,
+          );
           const existing = inProgressItem.timing;
           if (modified.status === ChatSessionStatus.InProgress) {
             inProgressItem.timing = {
@@ -139,6 +142,7 @@ class LifecycledChatSessionItemController extends DisposableBase {
     const items = diskItems.map((i) => {
       const item = this.controller.createChatSessionItem(i.resource, i.label);
       item.status = i.status;
+      item.changes = i.changes;
       if (i.timing) {
         item.timing = i.timing;
       }

@@ -1,3 +1,17 @@
+## [0.4.16] - 2026-05-20
+
+- Tightened the `writeTextFile` tracked-edit lifecycle so ACP edit tracking now resolves against the actual file write completion instead of waiting only for later tool-call completion updates.
+- Added a lightweight external edit tracker that associates `externalEdit(...)` registrations with file URIs and closes them as soon as the authoritative ACP write succeeds.
+- Improved the `writeTextFile` / edit-tool path so Keep / Undo actions appear more consistently and feel closer to Copilot-style tracked edits.
+- Added regression tests for URI-based external edit tracking registration, resolution, and unregister behavior.
+
+## [0.4.15] - 2026-05-20
+
+- Added a final live `Modified files` multi-diff at the end of ACP chat responses so the latest request shows the full accumulated diff instead of only per-tool deltas.
+- Broadened edit-resource detection to include diff content paths, allowing more ACP edit flows to participate in VS Code's tracked-edit UX and surface the bottom changes area with keep/undo actions.
+- Started surfacing cumulative changed-file metadata through chat session items so session-level change summaries stay aligned with the diff artifacts.
+- Added a regression test covering diff-path resource extraction for edit tracking.
+
 ## [0.4.14] - 2026-05-20
 
 - Fixed ACP file writes for open editors by routing all extension-managed writes through a shared coordinator that updates the in-memory document first and then saves it, preventing the "The content of the file is newer" save conflict.

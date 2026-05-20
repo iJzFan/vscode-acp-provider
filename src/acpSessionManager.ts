@@ -188,6 +188,7 @@ export interface AcpSessionManager extends vscode.Disposable {
     artifacts: readonly ToolDiffArtifact[],
   ): void;
   getCumulativeToolDiffArtifacts(sessionId: string): ToolDiffArtifact[];
+  getSessionChangedFiles(sessionId: string): vscode.ChatSessionChangedFile2[];
   clearCumulativeToolDiffArtifacts(sessionId: string): void;
 }
 
@@ -520,6 +521,7 @@ class SessionManager extends DisposableBase implements AcpSessionManager {
         timing: {
           created: Number(session.updatedAt),
         },
+        changes: this.getSessionChangedFiles(session.sessionId),
       });
     }
     return chatSessionItems;
@@ -865,6 +867,19 @@ class SessionManager extends DisposableBase implements AcpSessionManager {
       return [];
     }
     return Array.from(sessionMap.values());
+  }
+
+  getSessionChangedFiles(sessionId: string): vscode.ChatSessionChangedFile2[] {
+    return this.getCumulativeToolDiffArtifacts(sessionId).map(
+      (artifact) =>
+        new vscode.ChatSessionChangedFile2(
+          artifact.fileUri,
+          artifact.hasOriginal ? artifact.originalUri : undefined,
+          artifact.hasModified ? artifact.modifiedUri : undefined,
+          artifact.added,
+          artifact.removed,
+        ),
+    );
   }
 
   clearCumulativeToolDiffArtifacts(sessionId: string): void {

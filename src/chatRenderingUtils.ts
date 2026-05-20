@@ -148,13 +148,27 @@ export function getToolInfo(
     }
   }
 
-  // extract locations
+  // extract locations and diff paths as edit resources
+  const workspaceRoot = currentWorkspaceRoot();
+  const resources = new Map<string, vscode.Uri>();
+
   if (toolCallUpdate.locations) {
-    const workspaceRoot = currentWorkspaceRoot();
-    const resources = toolCallUpdate.locations
-      .map((l) => l.path)
-      .map((p) => resolveUri(p, workspaceRoot));
-    response.resources = resources;
+    for (const location of toolCallUpdate.locations) {
+      const resource = resolveUri(location.path, workspaceRoot);
+      resources.set(resource.toString(), resource);
+    }
+  }
+
+  for (const content of toolCallUpdate.content ?? []) {
+    if (content.type !== "diff") {
+      continue;
+    }
+    const resource = resolveUri(content.path, workspaceRoot);
+    resources.set(resource.toString(), resource);
+  }
+
+  if (resources.size > 0) {
+    response.resources = Array.from(resources.values());
   }
 
   return response;

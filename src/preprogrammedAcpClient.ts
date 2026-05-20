@@ -23,6 +23,7 @@ import { AgentRegistryEntry } from "./agentRegistry";
 import { DisposableBase } from "./disposables";
 import { AcpClient, AcpPermissionHandler } from "./acpClient";
 import { writeTextFileWithCoordinator } from "./fileWriteCoordinator";
+import { resolveExternalEditsForUri } from "./externalEditTracker";
 import type { ThinkConfig } from "./types";
 
 const STREAM_DELAY_MS = 500;
@@ -399,6 +400,7 @@ class PreprogrammedAcpClient extends DisposableBase implements AcpClient {
   async writeTextFile(params: { uri: string; content: string }): Promise<void> {
     const uri = vscode.Uri.parse(params.uri);
     await writeTextFileWithCoordinator(uri, params.content);
+    resolveExternalEditsForUri(uri);
   }
 
   dispose(): void {
