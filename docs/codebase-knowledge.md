@@ -123,14 +123,16 @@ CREATE TABLE sessions (
 
 ### Session Closure
 
-Triggered by `vscode.chat.onDidDisposeChatSession` (proposed API) in `extension.ts`:
+The extension does **not** currently register `vscode.chat.onDidDisposeChatSession`.
+Live sessions therefore stay in `SessionManager.activeSessions` until they are
+reused, explicitly closed through internal helpers, or the extension host stops.
+`SessionManager.closeSession(uri)` still exists as an internal cleanup helper and:
 
 ```
 → SessionManager.closeSession(uri)
   → disposeSessionClient(sessionId, session)
       → cancellationSource.cancel()
-      → event subscriptions disposed
-      → session.client.dispose() → process.kill()
+      → permissionContext.dispose()
   → activeSessions.delete(sessionId)
 ```
 
@@ -415,11 +417,10 @@ export const VscodeSessionOptions = {
 | API                                                                           | File                                   | Purpose                                                                                                                                 |
 | ----------------------------------------------------------------------------- | -------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------- |
 | `vscode.chat.registerChatSessionContentProvider(type, provider, participant)` | `extension.ts`                         | Registers picker provider and content provider per agent                                                                                |
-| `vscode.chat.createChatSessionItemController(type, refreshHandler)`           | `acpChatSessionItemProvider.ts`        | Creates the session list sidebar controller per agent                                                                                   |
-| `ChatSessionItemController.newChatSessionItemHandler`                         | `acpChatSessionItemProvider.ts`        | Called by VS Code when a new (untitled) session sends its first request; returns an initialised `ChatSessionItem` with the real ACP URI |
-| `ChatSessionItemController.items` (collection)                                | `acpChatSessionItemProvider.ts`        | Managed set of `ChatSessionItem` objects, updated on session state changes                                                              |
+| `vscode.chat.createChatSessionItemController(type, refreshHandler)`           | `acpLifecycledChatSessionItemController.ts` | Creates the session list sidebar controller per agent                                                                              |
+| `ChatSessionItemController.newChatSessionItemHandler`                         | `acpLifecycledChatSessionItemController.ts` | Called by VS Code when a new (untitled) session sends its first request; returns an initialised `ChatSessionItem` with the real ACP URI |
+| `ChatSessionItemController.items` (collection)                                | `acpLifecycledChatSessionItemController.ts` | Managed set of `ChatSessionItem` objects, updated on session state changes                                                         |
 | `vscode.chat.createChatParticipant(id, handler)`                              | `extension.ts`                         | Registers the chat participant                                                                                                          |
-| `vscode.chat.onDidDisposeChatSession`                                         | `extension.ts`                         | Listens for panel close to kill agent process                                                                                           |
 | `ChatSessionContentProvider.provideChatSessionContent()`                      | `acpChatSessionContentProvider.ts:52`  | Returns session history + initial option values + `title`                                                                               |
 | `ChatSessionContentProvider.provideChatSessionProviderOptions()`              | `acpChatSessionContentProvider.ts:79`  | Returns available picker groups (mode, model, thought-level)                                                                            |
 | `ChatSessionContentProvider.provideHandleOptionsChange()`                     | `acpChatSessionContentProvider.ts:158` | Handles user picker selections                                                                                                          |
@@ -447,7 +448,7 @@ Proposed API declarations are in the root-level `.d.ts` files:
 | `src/acpClient.ts`                     | `AcpClientImpl` — process spawn, ACP protocol, model/mode/config state                                                                        |
 | `src/acpSessionManager.ts`             | `SessionManager` + `Session` — session CRUD, caching, event routing                                                                           |
 | `src/acpChatSessionContentProvider.ts` | `AcpChatSessionContentProvider` — VS Code picker integration                                                                                  |
-| `src/acpChatSessionItemProvider.ts`    | `createAcpChatSessionItemController` + `LifecycledChatSessionItemController` — sidebar session list using `ChatSessionItemController` pattern |
+| `src/acpLifecycledChatSessionItemController.ts` | `createAcpChatSessionItemController` + `LifecycledChatSessionItemController` — sidebar session list using `ChatSessionItemController` pattern |
 | `src/acpChatParticipant.ts`            | `AcpChatParticipant` — prompt handling, streaming, tool calls                                                                                 |
 | `src/acpSessionDb.ts`                  | `SqlLiteSessionDb` — SQLite persistence for sessions                                                                                          |
 | `src/chatIdentifiers.ts`               | URI scheme helpers: `createSessionUri`, `decodeVscodeResource`                                                                                |

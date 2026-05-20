@@ -39,6 +39,7 @@ export function trustedCommandMarkdown(content: string): vscode.MarkdownString {
 }
 
 const DEFAULT_TERMINAL_LANGUAGE = "shell";
+const POWERSHELL_CLIXML_MARKER = "#< CLIXML";
 
 export type ToolInfo = {
   toolCallId: string;
@@ -148,6 +149,10 @@ export function getToolInfo(
     }
   }
 
+  if (typeof response.output === "string") {
+    response.output = sanitizeToolOutput(response.output);
+  }
+
   // extract locations and diff paths as edit resources
   const workspaceRoot = currentWorkspaceRoot();
   const resources = new Map<string, vscode.Uri>();
@@ -172,6 +177,15 @@ export function getToolInfo(
   }
 
   return response;
+}
+
+function sanitizeToolOutput(output: string): string | undefined {
+  const clixmlMarkerIndex = output.indexOf(POWERSHELL_CLIXML_MARKER);
+  const withoutCliXml = clixmlMarkerIndex >= 0
+    ? output.slice(0, clixmlMarkerIndex)
+    : output;
+  const cleaned = withoutCliXml.trimEnd();
+  return cleaned.length > 0 ? cleaned : undefined;
 }
 
 type ToolCommandPayload = {

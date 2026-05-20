@@ -325,4 +325,35 @@ suite("diffRendering", () => {
     assert.equal(merged.oldText, "");
     assert.equal(merged.newText, "export const created = 'still new';\n");
   });
+
+  test("collectToolDiffArtifacts coalesces repeated diffs for the same file in one update", () => {
+    const workspaceRoot = MockUri.file(path.join("C:", "workspace"));
+
+    const artifacts = diffRendering.collectToolDiffArtifacts(
+      {
+        toolCallId: "tool-3",
+        content: [
+          {
+            type: "diff",
+            path: "src/example.ts",
+            oldText: "const value = 1;\n",
+            newText: "const value = 2;\n",
+          },
+          {
+            type: "diff",
+            path: ".\\src\\example.ts",
+            oldText: "const value = 2;\n",
+            newText: "const value = 3;\n",
+          },
+        ],
+      } as never,
+      workspaceRoot as never,
+    );
+
+    assert.equal(artifacts.length, 1);
+    assert.equal(artifacts[0].oldText, "const value = 1;\n");
+    assert.equal(artifacts[0].newText, "const value = 3;\n");
+    assert.equal(artifacts[0].hasOriginal, true);
+    assert.equal(artifacts[0].hasModified, true);
+  });
 });

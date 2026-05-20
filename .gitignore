@@ -7,3 +7,6 @@ out
 /.agents
 /.oma
 *.log
+/.codegraph
+*.png
+*.zip

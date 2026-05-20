@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 import { ToolCallUpdate } from "@agentclientprotocol/sdk";
+import * as path from "path";
 import * as vscode from "vscode";
 import { buildDiffStats, resolveUri } from "./chatRenderingUtils";
 import { createDiffUri, setDiffContent } from "./diffContentProvider";
@@ -18,6 +19,18 @@ export type ToolDiffArtifact = {
   oldText: string;
   newText: string;
 };
+
+export function getToolDiffArtifactKey(fileUri: vscode.Uri): string {
+  if (fileUri.scheme === "file") {
+    const normalizedPath = path.normalize(fileUri.fsPath || fileUri.path);
+    const canonicalPath = process.platform === "win32"
+      ? normalizedPath.toLowerCase()
+      : normalizedPath;
+    return `file:${canonicalPath}`;
+  }
+
+  return `${fileUri.scheme}:${fileUri.path}`;
+}
 
 export function mergeToolDiffArtifacts(
   existing: ToolDiffArtifact,
@@ -53,7 +66,7 @@ export function collectToolDiffArtifacts(
     return [];
   }
 
-  const artifacts: ToolDiffArtifact[] = [];
+  const artifactsByKey = new Map<string, ToolDiffArtifact>();
   let diffIndex = 0;
   for (const content of update.content) {
     if (content.type !== "diff") {
@@ -92,7 +105,7 @@ export function collectToolDiffArtifacts(
       setDiffContent(modifiedUri, newText);
     }
 
-    artifacts.push({
+    const artifact: ToolDiffArtifact = {
       fileUri,
       originalUri,
       modifiedUri,
@@ -102,11 +115,18 @@ export function collectToolDiffArtifacts(
       isDeletion,
       oldText,
       newText,
-    });
+    };
+
+    const key = getToolDiffArtifactKey(fileUri);
+    const existing = artifactsByKey.get(key);
+    artifactsByKey.set(
+      key,
+      existing ? mergeToolDiffArtifacts(existing, artifact) : artifact,
+    );
     diffIndex++;
   }
 
-  return artifacts;
+  return Array.from(artifactsByKey.values());
 }
 
 export function createToolDiffPart(

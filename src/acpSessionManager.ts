@@ -25,7 +25,11 @@ import {
   SessionModeState,
   type SessionNotification,
 } from "@agentclientprotocol/sdk";
-import { mergeToolDiffArtifacts, ToolDiffArtifact } from "./diffRendering";
+import {
+  getToolDiffArtifactKey,
+  mergeToolDiffArtifacts,
+  ToolDiffArtifact,
+} from "./diffRendering";
 
 export class Session {
   private _status: ChatSessionStatus;
@@ -852,7 +856,7 @@ class SessionManager extends DisposableBase implements AcpSessionManager {
       this.cumulativeToolDiffs.set(sessionId, sessionMap);
     }
     for (const artifact of artifacts) {
-      const key = artifact.fileUri.toString();
+      const key = getToolDiffArtifactKey(artifact.fileUri);
       const existing = sessionMap.get(key);
       sessionMap.set(
         key,

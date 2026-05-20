@@ -132,4 +132,35 @@ suite("chatRenderingUtils", () => {
       path.join(path.resolve(path.join("C:", "workspace")), "src", "example.ts"),
     );
   });
+
+  test("getToolInfo strips trailing PowerShell CLIXML noise from output", () => {
+    const info = chatRenderingUtils.getToolInfo({
+      toolCallId: "tool-2",
+      title: "npm test",
+      kind: "execute",
+      status: "failed",
+      rawOutput: {
+        command: ["npm", "test"],
+        formatted_output:
+          "TypeError: boom\n#< CLIXML\n<Objs Version=\"1.1.0.1\"></Objs>",
+      },
+    } as never);
+
+    assert.equal(info.output, "TypeError: boom");
+  });
+
+  test("getToolInfo drops pure PowerShell CLIXML output", () => {
+    const info = chatRenderingUtils.getToolInfo({
+      toolCallId: "tool-3",
+      title: "npm test",
+      kind: "execute",
+      status: "completed",
+      rawOutput: {
+        command: ["npm", "test"],
+        formatted_output: "#< CLIXML\n<Objs Version=\"1.1.0.1\"></Objs>",
+      },
+    } as never);
+
+    assert.equal(info.output, undefined);
+  });
 });

@@ -3,7 +3,7 @@ import {
   createPermissionResolveCommandId,
   PermissionPromptManager,
 } from "./permissionPrompts";
-import { createAcpChatSessionItemProvider } from "./acpChatSessionItemProvider";
+import { createAcpChatSessionItemController } from "./acpLifecycledChatSessionItemController";
 import { createSessionDb, SessionDb } from "./acpSessionDb";
 import { createTestAcpClientWithScenarios } from "./testScenarios";
 import { AcpClient } from "./acpClient";
@@ -40,8 +40,8 @@ function getMissingRuntimeRequirements(): string[] {
     missing.push("vscode.chat.registerChatSessionContentProvider");
   }
 
-  if (typeof vscode.chat.registerChatSessionItemProvider !== "function") {
-    missing.push("vscode.chat.registerChatSessionItemProvider");
+  if (typeof vscode.chat.createChatSessionItemController !== "function") {
+    missing.push("vscode.chat.createChatSessionItemController");
   }
 
   if (typeof vscode.lm.registerLanguageModelChatProvider !== "function") {
@@ -335,18 +335,14 @@ function registerAgents(params: {
       ),
     );
 
-    const sessionItemProvider = createAcpChatSessionItemProvider(
+    const sessionItemController = createAcpChatSessionItemController(
+      `${ACP_CHAT_SCHEME}-${agent.id}`,
+      agent.id,
       sessionManager,
       params.sessionDb,
       outputChannel,
     );
-    context.subscriptions.push(sessionItemProvider);
-    context.subscriptions.push(
-      vscode.chat.registerChatSessionItemProvider(
-        `${ACP_CHAT_SCHEME}-${agent.id}`,
-        sessionItemProvider,
-      ),
-    );
+    context.subscriptions.push(sessionItemController);
 
     managers.set(agent.id, sessionManager);
   });

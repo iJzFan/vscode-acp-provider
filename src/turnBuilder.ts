@@ -18,6 +18,7 @@ import {
 import {
   collectToolDiffArtifacts,
   createToolDiffPart,
+  getToolDiffArtifactKey,
   mergeToolDiffArtifacts,
 } from "./diffRendering";
 import { currentWorkspaceRoot } from "./types";
@@ -221,7 +222,7 @@ export class TurnBuilder {
 
     const artifacts = collectToolDiffArtifacts(update, currentWorkspaceRoot());
     for (const artifact of artifacts) {
-      const key = artifact.fileUri.toString();
+      const key = getToolDiffArtifactKey(artifact.fileUri);
       const existing = this.cumulativeDiffArtifacts.get(key);
       this.cumulativeDiffArtifacts.set(
         key,
@@ -307,15 +308,15 @@ export class TurnBuilder {
     return undefined;
   }
   private parseUserChunk(raw: string): ParsedUserMessage {
-    const colonOutput = this.parseColonSeparatedUserChunk(raw);
-    if (colonOutput.userMessages || colonOutput.references.length) {
-      this.logger.debug("User message chunk parsed using Colon format");
-      return colonOutput;
-    }
     const xmlOutput = this.parseXmlLineUserChunk(raw);
     if (xmlOutput.userMessages || xmlOutput.references.length) {
       this.logger.debug("User message chunk parsed using XML format");
       return xmlOutput;
+    }
+    const colonOutput = this.parseColonSeparatedUserChunk(raw);
+    if (colonOutput.userMessages || colonOutput.references.length) {
+      this.logger.debug("User message chunk parsed using Colon format");
+      return colonOutput;
     }
     this.logger.debug("User message chunk could not be parsed, returning raw value");
     return { userMessages: raw, references: [] };
@@ -332,6 +333,12 @@ export class TurnBuilder {
       return match?.[1]?.trim();
     };
 
+    const decodeXmlEntities = (value: string): string =>
+      value
+        .replace(/&lt;/g, "<")
+        .replace(/&gt;/g, ">")
+        .replace(/&amp;/g, "&");
+
     const commandMessage = extractTagValue("command-message");
     const commandName = extractTagValue("command-name");
     const commandArgs = extractTagValue("command-args");
@@ -340,14 +347,14 @@ export class TurnBuilder {
 
     let slashCommand = "";
     if (commandMessage) {
-      slashCommand = "/" + normalizeCommandName(commandMessage.trim());
+      slashCommand = "/" + normalizeCommandName(decodeXmlEntities(commandMessage.trim()));
     } else if (commandName) {
-      slashCommand = "/" + normalizeCommandName(commandName);
+      slashCommand = "/" + normalizeCommandName(decodeXmlEntities(commandName));
     }
     if (slashCommand && commandArgs) {
-      slashCommand = slashCommand + " " + commandArgs;
+      slashCommand = slashCommand + " " + decodeXmlEntities(commandArgs);
     } else if (!slashCommand && commandArgs) {
-      slashCommand = " " + commandArgs;
+      slashCommand = " " + decodeXmlEntities(commandArgs);
     }
 
     userMessages = userMessages
@@ -370,7 +377,7 @@ export class TurnBuilder {
       return "";
     });
 
-    const cleanedMessage = userMessages.trim();
+    const cleanedMessage = userMessages.replace(/^User:\s*/i, "").trim();
     const finalMessage = slashCommand
       ? cleanedMessage
         ? slashCommand + "\n" + cleanedMessage

@@ -1,3 +1,21 @@
+## [0.4.19] - 2026-05-21
+
+- Fixed live and replayed diff rendering so repeated ACP diff hunks for the same file coalesce into a single file entry instead of showing duplicate changed-file rows.
+- Normalized cumulative diff artifact keys more aggressively so equivalent file paths merge reliably across updates.
+- Fixed structured command history parsing so resumed sessions decode escaped XML command arguments and prefer the tagged command format over the older `User:` fallback text path.
+- Stripped trailing PowerShell `CLIXML` progress noise from terminal/tool output before rendering, avoiding raw XML blobs in command results.
+
+## [0.4.18] - 2026-05-21
+
+- Fixed the chat-session item controller crash when VS Code invokes `newChatSessionItemHandler` before `request.sessionResource` is available for a new ACP session.
+- Added a placeholder-item fallback for resource-less startup requests and a regression test that covers the early-session runtime shape.
+
+## [0.4.17] - 2026-05-20
+
+- Fixed ACP session-list lifecycle wiring so in-progress sessions no longer disappear from the sidebar when users start another session or navigate back to the session list.
+- Switched the runtime registration path to the `ChatSessionItemController` implementation, which keeps live in-progress items merged with persisted sessions and promotes untitled sessions into stable session items on first request.
+- Corrected the architecture notes for session-list management and session disposal behavior.
+
 ## [0.4.16] - 2026-05-20
 
 - Tightened the `writeTextFile` tracked-edit lifecycle so ACP edit tracking now resolves against the actual file write completion instead of waiting only for later tool-call completion updates.

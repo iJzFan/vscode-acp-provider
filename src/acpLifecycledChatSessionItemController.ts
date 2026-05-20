@@ -1,9 +1,16 @@
 // SPDX-License-Identifier: Apache-2.0
-import vscode, { ChatSessionStatus } from "vscode";
+import * as vscode from "vscode";
 import { AcpSessionManager } from "./acpSessionManager";
 import { DisposableBase } from "./disposables";
 import { SessionDb } from "./acpSessionDb";
-import { createSessionUri } from "./chatIdentifiers";
+
+let vscodeApi: typeof vscode = vscode;
+
+export function setChatSessionItemControllerVscodeForTesting(
+  value: typeof vscode | undefined,
+): void {
+  vscodeApi = value ?? vscode;
+}
 
 export function createAcpChatSessionItemController(
   chatSessionType: string,
@@ -24,6 +31,7 @@ export function createAcpChatSessionItemController(
 class LifecycledChatSessionItemController extends DisposableBase {
   private readonly controller: vscode.ChatSessionItemController;
   private readonly inProgressItems = new Map<string, vscode.ChatSessionItem>();
+  private readonly pendingItemsWithoutResource: vscode.ChatSessionItem[] = [];
 
   constructor(
     chatSessionType: string,
@@ -35,22 +43,23 @@ class LifecycledChatSessionItemController extends DisposableBase {
     super();
 
     this.controller = this._register(
-      vscode.chat.createChatSessionItemController(chatSessionType, (token) =>
+      vscodeApi.chat.createChatSessionItemController(chatSessionType, (token) =>
         this.refresh(token),
       ),
     );
 
     this.controller.newChatSessionItemHandler = async (context, _token) => {
-      const session = this.sessionManager.getActive(
-        context.request.sessionResource,
-      );
+      const sessionResource = context.request.sessionResource;
+      const session = sessionResource
+        ? this.sessionManager.getActive(sessionResource)
+        : undefined;
       if (session) {
         const uri = this.sessionManager.createSessionUri(session);
         const item = this.controller.createChatSessionItem(
           uri,
           session.acpSessionId,
         );
-        item.status = ChatSessionStatus.InProgress;
+        item.status = vscodeApi.ChatSessionStatus.InProgress;
         item.timing = { created: Date.now(), lastRequestStarted: Date.now() };
         this.inProgressItems.set(session.acpSessionId, item);
         this.logger.debug(
@@ -61,31 +70,55 @@ class LifecycledChatSessionItemController extends DisposableBase {
       // Fallback: return a placeholder using the untitled resource.
       // Track it by resource URI so onDidChangeSession can update it once the
       // agent assigns a real session ID.
+      const fallbackResource =
+        sessionResource ??
+        vscodeApi.Uri.parse(
+          `acp-${this.agentId}:/untitled-pending-${encodeURIComponent(context.request.id)}`,
+        );
       const item = this.controller.createChatSessionItem(
-        context.request.sessionResource,
+        fallbackResource,
         context.request.prompt,
       );
-      item.status = ChatSessionStatus.InProgress;
+      item.status = vscodeApi.ChatSessionStatus.InProgress;
       item.timing = { created: Date.now(), lastRequestStarted: Date.now() };
-      this.inProgressItems.set(
-        context.request.sessionResource.toString(),
-        item,
-      );
-      this.logger.debug(
-        `newChatSessionItemHandler: created fallback item for resource ${context.request.sessionResource}`,
-      );
+      if (sessionResource) {
+        this.inProgressItems.set(sessionResource.toString(), item);
+        this.logger.debug(
+          `newChatSessionItemHandler: created fallback item for resource ${sessionResource}`,
+        );
+      } else {
+        this.pendingItemsWithoutResource.push(item);
+        this.logger.debug(
+          `newChatSessionItemHandler: created fallback item without session resource for request ${context.request.id}`,
+        );
+      }
       return item;
     };
 
     this._register(
       this.sessionManager.onDidChangeSession(({ modified }) => {
-        // Primary lookup by acpSessionId; fall back to resource URI for sessions
-        // that were created via the fallback path in newChatSessionItemHandler
-        // before the agent assigned a real session ID.
-        const key = this.inProgressItems.has(modified.acpSessionId)
-          ? modified.acpSessionId
-          : modified.vscodeResource.toString();
-        const inProgressItem = this.inProgressItems.get(key);
+        let key = modified.acpSessionId;
+        let inProgressItem = this.inProgressItems.get(key);
+        if (!inProgressItem) {
+          const resourceKey = modified.vscodeResource.toString();
+          const fallbackItem = this.inProgressItems.get(resourceKey);
+          if (fallbackItem) {
+            this.inProgressItems.delete(resourceKey);
+            this.inProgressItems.set(modified.acpSessionId, fallbackItem);
+            key = modified.acpSessionId;
+            inProgressItem = fallbackItem;
+          }
+        }
+        if (!inProgressItem && this.pendingItemsWithoutResource.length > 0) {
+          inProgressItem = this.pendingItemsWithoutResource.shift();
+          if (inProgressItem) {
+            this.inProgressItems.set(modified.acpSessionId, inProgressItem);
+            key = modified.acpSessionId;
+            this.logger.debug(
+              `Bound pending resource-less item to session ${modified.acpSessionId}`,
+            );
+          }
+        }
         if (inProgressItem) {
           // Mutate in-place — VS Code fires onDidChangeChatSessionItemState automatically
           inProgressItem.label = modified.title;
@@ -94,7 +127,7 @@ class LifecycledChatSessionItemController extends DisposableBase {
             modified.acpSessionId,
           );
           const existing = inProgressItem.timing;
-          if (modified.status === ChatSessionStatus.InProgress) {
+          if (modified.status === vscodeApi.ChatSessionStatus.InProgress) {
             inProgressItem.timing = {
               ...(existing ?? { created: Date.now() }),
               lastRequestStarted: Date.now(),
@@ -108,8 +141,8 @@ class LifecycledChatSessionItemController extends DisposableBase {
           }
 
           if (
-            modified.status !== ChatSessionStatus.InProgress &&
-            modified.status !== ChatSessionStatus.NeedsInput
+            modified.status !== vscodeApi.ChatSessionStatus.InProgress &&
+            modified.status !== vscodeApi.ChatSessionStatus.NeedsInput
           ) {
             this.inProgressItems.delete(key);
             this.sessionDb
@@ -120,7 +153,7 @@ class LifecycledChatSessionItemController extends DisposableBase {
                 updatedAt: modified.updatedAt,
               })
               .then(() => {
-                const cts = new vscode.CancellationTokenSource();
+                const cts = new vscodeApi.CancellationTokenSource();
                 return this.refresh(cts.token).finally(() => cts.dispose());
               })
               .catch((err) =>

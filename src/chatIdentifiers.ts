@@ -24,6 +24,10 @@ export function decodeVscodeResource(resource: vscode.Uri): {
   isUntitled: boolean;
   sessionId: string;
 } {
+  if (!resource) {
+    throw new Error("Missing chat session resource");
+  }
+
   if (!resource.path || resource.path.length < 2) {
     throw new Error(`Invalid resource path: ${resource.toString()}`);
   }
