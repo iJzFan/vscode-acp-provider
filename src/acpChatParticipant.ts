@@ -8,6 +8,9 @@ import * as vscode from "vscode";
 import {
   buildMcpToolInvocationData,
   buildTerminalToolInvocationData,
+  formatCurrentModeUpdateSummary,
+  formatToolLifecycleSummary,
+  formatUsageUpdateSummary,
   getSubAgentInvocationId,
   getToolInfo,
   isTerminalToolInvocation,
@@ -29,8 +32,14 @@ import { buildStructuredCommandPrompt } from "./chatCommandSerialization";
 import { DisposableBase } from "./disposables";
 import {
   collectToolDiffArtifacts,
+  collectToolMetadataDiffArtifacts,
+  createToolDiffArtifactsFromSnapshots,
+  buildToolDiffJumpCommands,
   createToolDiffPart,
+  getToolDiffArtifactKey,
   pushToolDiffPart,
+  type ToolDiffArtifact,
+  type ToolDiffSnapshot,
 } from "./diffRendering";
 import { registerExternalEdit } from "./externalEditTracker";
 import { PermissionPromptManager } from "./permissionPrompts";
@@ -52,6 +61,12 @@ function isQuestionToolCall(title: string | undefined): boolean {
   const normalized = title.toLowerCase().replace(/[-_]/g, "");
   return normalized === "question" || normalized === "askuserquestion";
 }
+
+type ToolDiffBaseline = {
+  fileUri: vscode.Uri;
+  hasOriginal: boolean;
+  oldText: string;
+};
 
 export class AcpChatParticipant extends DisposableBase {
   requestHandler: vscode.ChatRequestHandler = this.handleRequest.bind(this);
@@ -97,6 +112,10 @@ export class AcpChatParticipant extends DisposableBase {
   >();
   private readonly questionToolCalls = new Set<string>();
   private readonly sessionUsageMilestones = new Map<string, number>();
+  private readonly pendingToolDiffBaselines = new Map<
+    string,
+    Map<string, ToolDiffBaseline>
+  >();
   private currentToolInvocationToken:
     | vscode.ChatParticipantToolToken
     | undefined;
@@ -632,6 +651,7 @@ export class AcpChatParticipant extends DisposableBase {
                   : {}),
               }
             : undefined;
+        response.progress(formatToolLifecycleSummary("started", update, info));
         response.beginToolInvocation(
           update.toolCallId,
           info.name || "Tool",
@@ -644,6 +664,7 @@ export class AcpChatParticipant extends DisposableBase {
           this.questionToolCalls.add(update.toolCallId);
         }
 
+        await this.trackToolDiffBaselines(info, update, session);
         // Track if a file change
         this.handleFileEditToolCalls(info, update, response);
         break;
@@ -698,6 +719,7 @@ export class AcpChatParticipant extends DisposableBase {
               partialInput: update.rawInput ?? info.input,
             });
           }
+          await this.trackToolDiffBaselines(info, update, session);
           this.handleFileEditToolCalls(info, update, response);
           break;
         }
@@ -734,6 +756,13 @@ export class AcpChatParticipant extends DisposableBase {
           : undefined;
         part.toolSpecificData =
           terminalData ?? buildMcpToolInvocationData(info);
+        response.progress(
+          formatToolLifecycleSummary(
+            update.status === "failed" ? "failed" : "completed",
+            update,
+            info,
+          ),
+        );
         response.push(part);
         this.logToolCallLifecycle(
           update.status === "failed" ? "failed" : "completed",
@@ -743,11 +772,9 @@ export class AcpChatParticipant extends DisposableBase {
         this.renderToolFileSummary(response, update, info);
 
         // Track as external edit, if file change
-        const handled = this.handleFileEditToolCalls(info, update, response);
-        if (!handled) {
-          // fallback to file diffs
-          this.handleDiffToolContents(update, response, session);
-        }
+        this.handleFileEditToolCalls(info, update, response);
+        await this.handleDiffToolContents(update, response, session, info);
+        this.clearToolDiffBaselines(session.acpSessionId, update.toolCallId);
 
         this.toolInvocations.delete(update.toolCallId);
         break;
@@ -757,6 +784,14 @@ export class AcpChatParticipant extends DisposableBase {
         break;
       }
       case "current_mode_update": {
+        if (typeof update.currentModeId === "string") {
+          if (session.defaultChatOptions.modeId !== update.currentModeId) {
+            response.progress(
+              formatCurrentModeUpdateSummary(update.currentModeId),
+            );
+          }
+          session.defaultChatOptions.modeId = update.currentModeId;
+        }
         break;
       }
       case "session_info_update": {
@@ -776,7 +811,13 @@ export class AcpChatParticipant extends DisposableBase {
             completionTokens: 0,
             outputBuffer: Math.max(0, update.size - update.used),
           });
-          this.renderContextWindowHints(response, session, update.used, update.size);
+          this.renderContextWindowHints(
+            response,
+            session,
+            update.used,
+            update.size,
+            update.cost,
+          );
         }
         break;
       }
@@ -1004,6 +1045,7 @@ export class AcpChatParticipant extends DisposableBase {
     session: Session,
     used: number,
     size: number,
+    cost?: { amount: number; currency: string },
   ): void {
     if (!session.acpSessionId || size <= 0) {
       return;
@@ -1015,9 +1057,7 @@ export class AcpChatParticipant extends DisposableBase {
     const previousMilestone =
       this.sessionUsageMilestones.get(session.acpSessionId) ?? -1;
 
-    response.progress(
-      `Context window usage: ${percentUsed}% (${this.formatTokenCount(used)} / ${this.formatTokenCount(size)} tokens)`,
-    );
+    response.progress(formatUsageUpdateSummary({ used, size, cost }));
 
     if (nextMilestone > previousMilestone) {
       this.sessionUsageMilestones.set(session.acpSessionId, nextMilestone);
@@ -1047,20 +1087,8 @@ export class AcpChatParticipant extends DisposableBase {
     update: ToolCall | ToolCallUpdate,
     info: ToolInfo,
   ): void {
-    const touchedFiles = this.getToolRelatedPaths(update);
-    const contentTypes = update.content?.map((content) => content.type) ?? [];
-    const summaryParts = [
-      `id=${update.toolCallId}`,
-      `name=${info.name || update.title || "Tool"}`,
-      `kind=${info.kind}`,
-      `status=${update.status ?? "pending"}`,
-      `content=${contentTypes.length ? contentTypes.join(",") : "none"}`,
-      `rawInput=${update.rawInput ? "yes" : "no"}`,
-      `rawOutput=${update.rawOutput ? "yes" : "no"}`,
-      `files=${touchedFiles.length ? touchedFiles.join(", ") : "none"}`,
-    ];
     this.logger.info(
-      `[acp:${this.agentId}] Tool ${phase}: ${summaryParts.join("; ")}`,
+      `[acp:${this.agentId}] ${formatToolLifecycleSummary(phase, update, info)}`,
     );
   }
 
@@ -1116,8 +1144,22 @@ export class AcpChatParticipant extends DisposableBase {
     update: ToolCallUpdate,
     stream: vscode.ChatResponseStream,
     session: Session,
-  ): void {
-    const diffArtifacts = collectToolDiffArtifacts(update, currentWorkspaceRoot());
+    info: ToolInfo,
+  ): Promise<void> {
+    return this.renderToolDiffArtifacts(update, stream, session, info);
+  }
+
+  private async renderToolDiffArtifacts(
+    update: ToolCallUpdate,
+    stream: vscode.ChatResponseStream,
+    session: Session,
+    info: ToolInfo,
+  ): Promise<void> {
+    const diffArtifacts = await this.collectLiveToolDiffArtifacts(
+      update,
+      session,
+      info,
+    );
     this.sessionManager.recordToolDiffArtifacts(session.acpSessionId, diffArtifacts);
     pushToolDiffPart(stream, diffArtifacts);
   }
@@ -1126,14 +1168,264 @@ export class AcpChatParticipant extends DisposableBase {
     response: vscode.ChatResponseStream,
     session: Session,
   ): void {
+    const artifacts = this.sessionManager.getCumulativeToolDiffArtifacts(
+      session.acpSessionId,
+    );
     const diffPart = createToolDiffPart(
-      this.sessionManager.getCumulativeToolDiffArtifacts(session.acpSessionId),
+      artifacts,
+      { includeGoToFileUri: false },
     );
     if (!diffPart) {
       return;
     }
     diffPart.title = "Modified files";
     response.push(diffPart);
+
+    const jumpCommands = buildToolDiffJumpCommands(artifacts);
+    if (jumpCommands.length > 0) {
+      response.markdown("Jump to changed files:\n\n");
+      jumpCommands.forEach((command) => response.button(command));
+    }
+  }
+
+  private async trackToolDiffBaselines(
+    info: ToolInfo,
+    data: ToolCall | ToolCallUpdate,
+    session: Session,
+  ): Promise<void> {
+    const targetUris = this.getToolDiffTargetUris(info, data);
+    if (!targetUris.length) {
+      return;
+    }
+
+    const baselineMap = this.getOrCreateToolDiffBaselineMap(
+      session.acpSessionId,
+      info.toolCallId,
+    );
+    const cumulativeArtifacts = new Map(
+      this.sessionManager
+        .getCumulativeToolDiffArtifacts(session.acpSessionId)
+        .map((artifact) => [getToolDiffArtifactKey(artifact.fileUri), artifact] as const),
+    );
+
+    for (const fileUri of targetUris) {
+      const key = getToolDiffArtifactKey(fileUri);
+      if (baselineMap.has(key)) {
+        continue;
+      }
+
+      const existing = cumulativeArtifacts.get(key);
+      if (existing) {
+        baselineMap.set(key, {
+          fileUri,
+          hasOriginal: existing.hasOriginal,
+          oldText: existing.oldText,
+        });
+        continue;
+      }
+
+      const originalText = await this.readWorkspaceText(fileUri);
+      baselineMap.set(key, {
+        fileUri,
+        hasOriginal: originalText !== undefined,
+        oldText: originalText ?? "",
+      });
+    }
+  }
+
+  private async collectLiveToolDiffArtifacts(
+    update: ToolCallUpdate,
+    session: Session,
+    info: ToolInfo,
+  ): Promise<ToolDiffArtifact[]> {
+    const workspaceRoot = currentWorkspaceRoot();
+    const fallbackArtifacts = this.collectFallbackToolDiffArtifacts(
+      update,
+      workspaceRoot,
+    );
+    const fallbackArtifactsByKey = new Map(
+      fallbackArtifacts.map((artifact) => [getToolDiffArtifactKey(artifact.fileUri), artifact] as const),
+    );
+    const targetUrisByKey = new Map(
+      this.getToolDiffTargetUris(info, update).map((fileUri) => [
+        getToolDiffArtifactKey(fileUri),
+        fileUri,
+      ] as const),
+    );
+    for (const artifact of fallbackArtifacts) {
+      targetUrisByKey.set(getToolDiffArtifactKey(artifact.fileUri), artifact.fileUri);
+    }
+    if (!targetUrisByKey.size) {
+      return fallbackArtifacts;
+    }
+
+    const baselineMap = this.peekToolDiffBaselineMap(
+      session.acpSessionId,
+      info.toolCallId,
+    );
+    const snapshots: ToolDiffSnapshot[] = [];
+    for (const [key, fileUri] of targetUrisByKey) {
+      const baseline = baselineMap?.get(key);
+      const fallback = fallbackArtifactsByKey.get(key);
+      const currentText = await this.readWorkspaceText(fileUri).catch((error) => {
+        this.logger.warn(
+          `Failed to read workspace file for cumulative diff ${fileUri.toString()}: ${extractReadableErrorMessage(error)}`,
+        );
+        return fallback?.hasModified ? fallback.newText : undefined;
+      });
+      const hasOriginal = baseline?.hasOriginal ?? fallback?.hasOriginal ?? false;
+      const oldText = baseline?.oldText ?? fallback?.oldText ?? "";
+      const hasModified = currentText !== undefined
+        ? true
+        : (fallback?.hasModified ?? false);
+      const newText = currentText ?? fallback?.newText ?? "";
+      if (!hasOriginal && !hasModified) {
+        continue;
+      }
+
+      snapshots.push({
+        fileUri,
+        hasOriginal,
+        oldText,
+        hasModified,
+        newText,
+      });
+    }
+
+    return snapshots.length
+      ? createToolDiffArtifactsFromSnapshots(update.toolCallId, snapshots)
+      : fallbackArtifacts;
+  }
+
+  private collectFallbackToolDiffArtifacts(
+    update: ToolCallUpdate,
+    workspaceRoot: vscode.Uri | undefined,
+  ): ToolDiffArtifact[] {
+    const artifacts = new Map<string, ToolDiffArtifact>();
+    for (const artifact of [
+      ...collectToolDiffArtifacts(update, workspaceRoot),
+      ...collectToolMetadataDiffArtifacts(update, workspaceRoot),
+    ]) {
+      artifacts.set(getToolDiffArtifactKey(artifact.fileUri), artifact);
+    }
+    return Array.from(artifacts.values());
+  }
+
+  private getToolDiffTargetUris(
+    info: ToolInfo,
+    data: ToolCall | ToolCallUpdate,
+  ): vscode.Uri[] {
+    const resourceUris = new Map<string, vscode.Uri>();
+    for (const resource of info.resources ?? []) {
+      resourceUris.set(resource.toString(), resource);
+    }
+    for (const resource of this.getToolCommandResourceUris(info, data)) {
+      resourceUris.set(resource.toString(), resource);
+    }
+    return Array.from(resourceUris.values());
+  }
+
+  private getToolCommandResourceUris(
+    info: ToolInfo,
+    data: ToolCall | ToolCallUpdate,
+  ): vscode.Uri[] {
+    if (info.kind !== "edit") {
+      return [];
+    }
+
+    const rawCommand = this.getToolCommandParts(data);
+    if (!rawCommand.length) {
+      return [];
+    }
+
+    const workspaceRoot = currentWorkspaceRoot();
+    const resources = new Map<string, vscode.Uri>();
+    for (const part of rawCommand.slice(1)) {
+      if (!this.looksLikeFilePath(part)) {
+        continue;
+      }
+      const uri = resolveUri(part, workspaceRoot);
+      resources.set(uri.toString(), uri);
+    }
+    return Array.from(resources.values());
+  }
+
+  private getToolCommandParts(data: ToolCall | ToolCallUpdate): string[] {
+    const raw = data.status === "pending" || data.status === "in_progress"
+      ? data.rawInput
+      : data.rawOutput;
+    if (!raw || typeof raw !== "object" || !("command" in raw)) {
+      return [];
+    }
+
+    const { command } = raw as { command?: unknown };
+    return Array.isArray(command)
+      ? command.filter((part): part is string => typeof part === "string")
+      : [];
+  }
+
+  private looksLikeFilePath(value: string): boolean {
+    if (!value || value.startsWith("-")) {
+      return false;
+    }
+
+    return /[\\/]/.test(value) || /\.[A-Za-z0-9]+$/.test(value);
+  }
+
+  private getOrCreateToolDiffBaselineMap(
+    sessionId: string,
+    toolCallId: string,
+  ): Map<string, ToolDiffBaseline> {
+    const key = this.getToolDiffBaselineKey(sessionId, toolCallId);
+    let baselineMap = this.pendingToolDiffBaselines.get(key);
+    if (!baselineMap) {
+      baselineMap = new Map<string, ToolDiffBaseline>();
+      this.pendingToolDiffBaselines.set(key, baselineMap);
+    }
+    return baselineMap;
+  }
+
+  private peekToolDiffBaselineMap(
+    sessionId: string,
+    toolCallId: string,
+  ): Map<string, ToolDiffBaseline> | undefined {
+    return this.pendingToolDiffBaselines.get(
+      this.getToolDiffBaselineKey(sessionId, toolCallId),
+    );
+  }
+
+  private clearToolDiffBaselines(sessionId: string, toolCallId: string): void {
+    this.pendingToolDiffBaselines.delete(
+      this.getToolDiffBaselineKey(sessionId, toolCallId),
+    );
+  }
+
+  private getToolDiffBaselineKey(sessionId: string, toolCallId: string): string {
+    return `${sessionId}:${toolCallId}`;
+  }
+
+  private async readWorkspaceText(uri: vscode.Uri): Promise<string | undefined> {
+    const openDocument = vscode.workspace.textDocuments.find(
+      (document) => document.uri.toString() === uri.toString(),
+    );
+    if (openDocument) {
+      return openDocument.getText();
+    }
+
+    try {
+      const bytes = await vscode.workspace.fs.readFile(uri);
+      return new TextDecoder().decode(bytes);
+    } catch (error) {
+      if (this.isFileNotFoundError(error)) {
+        return undefined;
+      }
+      throw error;
+    }
+  }
+
+  private isFileNotFoundError(error: unknown): boolean {
+    const message = error instanceof Error ? error.message : String(error);
+    return /file not found|entrynotfound|enoent/i.test(message);
   }
 
   private handleFileEditToolCalls(

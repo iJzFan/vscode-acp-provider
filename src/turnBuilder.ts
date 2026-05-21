@@ -10,13 +10,18 @@ import {
   buildMcpToolInvocationData,
   buildQuestionCarouselPart,
   buildTerminalToolInvocationData,
+  formatCurrentModeUpdateSummary,
+  formatToolLifecycleSummary,
+  formatUsageUpdateSummary,
   getSubAgentInvocationId,
   getToolInfo,
   isTerminalToolInvocation,
   resolveUri,
 } from "./chatRenderingUtils";
 import {
+  buildToolDiffJumpCommands,
   collectToolDiffArtifacts,
+  collectToolMetadataDiffArtifacts,
   createToolDiffPart,
   getToolDiffArtifactKey,
   mergeToolDiffArtifacts,
@@ -44,6 +49,7 @@ export class TurnBuilder {
   >();
   private readonly questionToolCalls = new Set<string>();
   private readonly cumulativeDiffArtifacts = new Map<string, import("./diffRendering").ToolDiffArtifact>();
+  private lastModeId: string | undefined;
 
   constructor(
     private readonly participantId: string,
@@ -94,11 +100,25 @@ export class TurnBuilder {
         break;
       }
       case "available_commands_update":
-      case "current_mode_update":
       case "config_option_update":
       case "session_info_update":
-      case "usage_update":
         break;
+      case "current_mode_update": {
+        this.flushPendingUserMessage();
+        this.flushAgentMessageChunksToMarkdown();
+        this.appendCurrentModeUpdate(update as { currentModeId?: unknown });
+        break;
+      }
+      case "usage_update": {
+        this.flushPendingUserMessage();
+        this.flushAgentMessageChunksToMarkdown();
+        this.appendUsageUpdate(update as {
+          used?: unknown;
+          size?: unknown;
+          cost?: unknown;
+        });
+        break;
+      }
     }
   }
 
@@ -106,10 +126,18 @@ export class TurnBuilder {
     this.flushPendingUserMessage();
     this.flushPendingAgentMessage();
     if (this.cumulativeDiffArtifacts.size > 0) {
-      const cumulativePart = createToolDiffPart(Array.from(this.cumulativeDiffArtifacts.values()));
+      const cumulativeArtifacts = Array.from(this.cumulativeDiffArtifacts.values());
+      const cumulativePart = createToolDiffPart(cumulativeArtifacts, {
+        includeGoToFileUri: false,
+      });
       if (cumulativePart) {
         cumulativePart.title = "Modified files";
         this.currentAgentParts.push(cumulativePart);
+        for (const command of buildToolDiffJumpCommands(cumulativeArtifacts)) {
+          this.currentAgentParts.push(
+            new vscode.ChatResponseCommandButtonPart(command),
+          );
+        }
         this.flushPendingAgentMessage();
       }
     }
@@ -126,6 +154,7 @@ export class TurnBuilder {
     this.toolCallParts.clear();
     this.questionToolCalls.clear();
     this.cumulativeDiffArtifacts.clear();
+    this.lastModeId = undefined;
   }
 
   private captureUserMessageChunk(content: ContentBlock): void {
@@ -151,6 +180,11 @@ export class TurnBuilder {
 
   private appendToolCall(update: ToolCall): void {
     const info = getToolInfo(update);
+    this.currentAgentParts.push(
+      new vscode.ChatResponseProgressPart(
+        formatToolLifecycleSummary("started", update, info),
+      ),
+    );
     const invocation = new vscode.ChatToolInvocationPart(
       info.name || "Tool",
       update.toolCallId,
@@ -214,13 +248,34 @@ export class TurnBuilder {
       ? buildTerminalToolInvocationData(update, info)
       : undefined;
     part.toolSpecificData = terminalData ?? buildMcpToolInvocationData(info);
+    this.currentAgentParts.push(
+      new vscode.ChatResponseProgressPart(
+        formatToolLifecycleSummary(
+          update.status === "failed" ? "failed" : "completed",
+          update,
+          info,
+        ),
+      ),
+    );
     this.toolCallParts.delete(update.toolCallId);
 
     if (!update.content?.length) {
       return;
     }
 
-    const artifacts = collectToolDiffArtifacts(update, currentWorkspaceRoot());
+    const mergedArtifacts = new Map<string, import("./diffRendering").ToolDiffArtifact>();
+    for (const artifact of [
+      ...collectToolDiffArtifacts(update, currentWorkspaceRoot()),
+      ...collectToolMetadataDiffArtifacts(update, currentWorkspaceRoot()),
+    ]) {
+      const key = getToolDiffArtifactKey(artifact.fileUri);
+      const existing = mergedArtifacts.get(key);
+      mergedArtifacts.set(
+        key,
+        existing ? mergeToolDiffArtifacts(existing, artifact) : artifact,
+      );
+    }
+    const artifacts = Array.from(mergedArtifacts.values());
     for (const artifact of artifacts) {
       const key = getToolDiffArtifactKey(artifact.fileUri);
       const existing = this.cumulativeDiffArtifacts.get(key);
@@ -249,6 +304,51 @@ export class TurnBuilder {
       markdown.appendMarkdown("-  [" + checkbox + "] " + entry.content + "\n");
     }
     this.currentAgentParts.push(new vscode.ChatResponseMarkdownPart(markdown));
+  }
+
+  private appendCurrentModeUpdate(update: { currentModeId?: unknown }): void {
+    if (typeof update.currentModeId !== "string") {
+      return;
+    }
+    if (this.lastModeId === update.currentModeId) {
+      return;
+    }
+    this.lastModeId = update.currentModeId;
+    this.currentAgentParts.push(
+      new vscode.ChatResponseProgressPart(
+        formatCurrentModeUpdateSummary(update.currentModeId),
+      ),
+    );
+  }
+
+  private appendUsageUpdate(update: {
+    used?: unknown;
+    size?: unknown;
+    cost?: unknown;
+  }): void {
+    if (typeof update.used !== "number" || typeof update.size !== "number") {
+      return;
+    }
+
+    const cost =
+      update.cost && typeof update.cost === "object" &&
+        typeof Reflect.get(update.cost, "amount") === "number" &&
+        typeof Reflect.get(update.cost, "currency") === "string"
+        ? {
+            amount: Reflect.get(update.cost, "amount") as number,
+            currency: Reflect.get(update.cost, "currency") as string,
+          }
+        : undefined;
+
+    this.currentAgentParts.push(
+      new vscode.ChatResponseProgressPart(
+        formatUsageUpdateSummary({
+          used: update.used,
+          size: update.size,
+          cost,
+        }),
+      ),
+    );
   }
 
   private flushPendingUserMessage(): void {

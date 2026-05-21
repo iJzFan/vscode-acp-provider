@@ -12,6 +12,7 @@ import {
   NewSessionRequest,
   NewSessionResponse,
   PromptResponse,
+  RequestId,
   PROTOCOL_VERSION,
   RequestPermissionRequest,
   RequestPermissionResponse,
@@ -85,7 +86,7 @@ export interface AcpClient extends Client, vscode.Disposable {
     notifications: SessionNotification[];
   }>;
   prompt(sessionId: string, prompt: ContentBlock[]): Promise<PromptResponse>;
-  cancel(sessionId: string): Promise<void>;
+  cancel(sessionId: string, requestId?: RequestId): Promise<void>;
   changeMode(sessionId: string, modeId: string): Promise<void>;
   changeModel(sessionId: string, modelId: string): Promise<void>;
   setThink(
@@ -121,6 +122,40 @@ export function createAcpClient(
   logChannel: vscode.LogOutputChannel,
 ): AcpClient {
   return new AcpClientImpl(agent, permissionHandler, logChannel);
+}
+
+export async function sendSessionCancel(
+  connection: Pick<ClientSideConnection, "cancel"> | null,
+  options: {
+    sessionId: string;
+    requestId?: RequestId;
+    agentId: string;
+    logChannel: Pick<vscode.LogOutputChannel, "appendLine" | "debug">;
+  },
+): Promise<boolean> {
+  if (!connection) {
+    return false;
+  }
+
+  if (options.requestId === undefined) {
+    options.logChannel.debug(
+      `[acp:${options.agentId}] Skipping session/cancel for ${options.sessionId} because no ACP requestId is available for the in-flight prompt.`,
+    );
+    return false;
+  }
+
+  try {
+    await connection.cancel({
+      sessionId: options.sessionId,
+      requestId: options.requestId,
+    });
+    return true;
+  } catch (error) {
+    options.logChannel.appendLine(
+      `[acp:${options.agentId}] failed to cancel session ${options.sessionId}: ${error instanceof Error ? error.message : String(error)}`,
+    );
+    return false;
+  }
 }
 
 type ClientMode = "new_session" | "load_session";
@@ -296,20 +331,13 @@ class AcpClientImpl extends DisposableBase implements AcpClient {
     });
   }
 
-  async cancel(sessionId: string): Promise<void> {
-    if (!this.connection) {
-      return;
-    }
-    try {
-      await this.connection.cancel({
-        sessionId,
-        requestId: "",
-      });
-    } catch (error) {
-      this.logChannel.appendLine(
-        `[acp:${this.agent.id}] failed to cancel session ${sessionId}: ${error instanceof Error ? error.message : String(error)}`,
-      );
-    }
+  async cancel(sessionId: string, requestId?: RequestId): Promise<void> {
+    await sendSessionCancel(this.connection, {
+      sessionId,
+      requestId,
+      agentId: this.agent.id,
+      logChannel: this.logChannel,
+    });
   }
 
   requestPermission(

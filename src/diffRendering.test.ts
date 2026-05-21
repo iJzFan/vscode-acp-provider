@@ -93,11 +93,16 @@ setup(() => {
     isMain: boolean,
   ) => {
     if (request === "vscode" || request === MOCK_VSCODE_MODULE_ID) {
+      const workspaceRoot = MockUri.file(path.join("C:", "workspace"));
       return {
         Uri: MockUri,
         ChatResponseMultiDiffPart: MockChatResponseMultiDiffPart,
         l10n: { t: (value: string) => value },
-        workspace: { workspaceFolders: undefined },
+        workspace: {
+          workspaceFolders: [{ uri: workspaceRoot }],
+          asRelativePath: (uri: MockUri) =>
+            path.relative(workspaceRoot.fsPath, uri.fsPath) || uri.fsPath,
+        },
       };
     }
     return originalLoad(request, parent, isMain);
@@ -189,6 +194,31 @@ suite("diffRendering", () => {
   test("createToolDiffPart returns undefined for empty artifacts", () => {
     const part = diffRendering.createToolDiffPart([]);
     assert.equal(part, undefined);
+  });
+
+  test("createToolDiffPart can keep cumulative rows focused on diffs instead of file jumps", () => {
+    const workspaceRoot = MockUri.file(path.join("C:", "workspace"));
+    const artifacts = diffRendering.collectToolDiffArtifacts(
+      {
+        toolCallId: "tool-cumulative",
+        content: [
+          {
+            type: "diff",
+            path: "src/example.ts",
+            oldText: "const before = 1;\n",
+            newText: "const after = 2;\n",
+          },
+        ],
+      } as never,
+      workspaceRoot as never,
+    );
+
+    const part = diffRendering.createToolDiffPart(artifacts, {
+      includeGoToFileUri: false,
+    }) as MockChatResponseMultiDiffPart;
+
+    assert.equal(part.value.length, 1);
+    assert.equal((part.value[0] as { goToFileUri?: unknown }).goToFileUri, undefined);
   });
 
   test("mergeToolDiffArtifacts preserves the earliest original and latest final text", () => {
@@ -355,5 +385,60 @@ suite("diffRendering", () => {
     assert.equal(artifacts[0].newText, "const value = 3;\n");
     assert.equal(artifacts[0].hasOriginal, true);
     assert.equal(artifacts[0].hasModified, true);
+  });
+
+  test("collectToolMetadataDiffArtifacts builds artifacts from tool metadata file snapshots", () => {
+    const workspaceRoot = MockUri.file(path.join("C:", "workspace"));
+
+    const artifacts = diffRendering.collectToolMetadataDiffArtifacts(
+      {
+        toolCallId: "tool-meta",
+        rawOutput: {
+          metadata: {
+            files: [
+              {
+                filePath: path.join(workspaceRoot.fsPath, "src", "meta.ts"),
+                before: "export const before = true;\n",
+                after: "export const after = true;\n",
+              },
+            ],
+          },
+        },
+      } as never,
+      workspaceRoot as never,
+    );
+
+    assert.equal(artifacts.length, 1);
+    assert.equal(artifacts[0].oldText, "export const before = true;\n");
+    assert.equal(artifacts[0].newText, "export const after = true;\n");
+  });
+
+  test("buildToolDiffJumpCommands creates open-file buttons for non-deleted files", () => {
+    const workspaceRoot = MockUri.file(path.join("C:", "workspace"));
+    const artifacts = diffRendering.collectToolDiffArtifacts(
+      {
+        toolCallId: "tool-buttons",
+        content: [
+          {
+            type: "diff",
+            path: "src/a.ts",
+            oldText: "a1\n",
+            newText: "a2\n",
+          },
+          {
+            type: "diff",
+            path: "src/deleted.ts",
+            oldText: "gone\n",
+          },
+        ],
+      } as never,
+      workspaceRoot as never,
+    );
+
+    const commands = diffRendering.buildToolDiffJumpCommands(artifacts);
+
+    assert.equal(commands.length, 1);
+    assert.equal(commands[0].command, "vscode.open");
+    assert.equal(commands[0].title, "Jump to src/a.ts");
   });
 });

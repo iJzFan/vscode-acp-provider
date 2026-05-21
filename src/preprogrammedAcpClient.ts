@@ -9,6 +9,7 @@ import {
   LoadSessionResponse,
   NewSessionResponse,
   PromptResponse,
+  RequestId,
   RequestPermissionRequest,
   RequestPermissionResponse,
   SessionConfigOption,
@@ -285,7 +286,7 @@ class PreprogrammedAcpClient extends DisposableBase implements AcpClient {
     return program.response ?? DEFAULT_STOP_RESPONSE;
   }
 
-  async cancel(_sessionId: string): Promise<void> {
+  async cancel(_sessionId: string, _requestId?: RequestId): Promise<void> {
     return;
   }
 

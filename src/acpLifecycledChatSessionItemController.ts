@@ -50,23 +50,28 @@ class LifecycledChatSessionItemController extends DisposableBase {
 
     this.controller.newChatSessionItemHandler = async (context, _token) => {
       const sessionResource = context.request.sessionResource;
-      const session = sessionResource
-        ? this.sessionManager.getActive(sessionResource)
-        : undefined;
-      if (session) {
-        const uri = this.sessionManager.createSessionUri(session);
-        const item = this.controller.createChatSessionItem(
-          uri,
-          session.acpSessionId,
-        );
-        item.status = vscodeApi.ChatSessionStatus.InProgress;
-        item.timing = { created: Date.now(), lastRequestStarted: Date.now() };
-        this.inProgressItems.set(session.acpSessionId, item);
-        this.logger.debug(
-          `newChatSessionItemHandler: created item for session ${session.acpSessionId}`,
-        );
-        return item;
+      if (sessionResource) {
+        try {
+          const { session } = await this.sessionManager.createOrGet(sessionResource);
+          const uri = this.sessionManager.createSessionUri(session);
+          const item = this.controller.createChatSessionItem(
+            uri,
+            session.acpSessionId,
+          );
+          item.status = vscodeApi.ChatSessionStatus.InProgress;
+          item.timing = { created: Date.now(), lastRequestStarted: Date.now() };
+          this.inProgressItems.set(session.acpSessionId, item);
+          this.logger.debug(
+            `newChatSessionItemHandler: created item for session ${session.acpSessionId}`,
+          );
+          return item;
+        } catch (error) {
+          this.logger.error(
+            `newChatSessionItemHandler: failed to initialize session for resource ${sessionResource.toString()}: ${error instanceof Error ? error.message : String(error)}`,
+          );
+        }
       }
+
       // Fallback: return a placeholder using the untitled resource.
       // Track it by resource URI so onDidChangeSession can update it once the
       // agent assigns a real session ID.

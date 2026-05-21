@@ -1,3 +1,22 @@
+## [0.5.3] - 2026-05-21
+
+- Fixed untitled ACP session cache cleanup so starting a new chat from the session list no longer reuses the previously completed untitled session.
+- Fixed first-request session-item initialization so session-list launches bind to the real ACP session URI immediately instead of leaving new chats on colliding untitled resources.
+- Reused already-active named sessions in the session manager so promoted live sessions do not spawn duplicate ACP sessions when VS Code requests their content.
+- Added a regression test covering back-to-list then new-untitled-session creation.
+
+## [0.5.1] - 2026-05-20
+
+- Surfaced ACP tool lifecycle summaries in the chat UI and session replay so pending/completed tool calls such as sub-agent planner invocations no longer appear only in the `ACP Client` log.
+- Preserved multiple structured tool output fields and retained PowerShell `CLIXML` payloads instead of truncating them from rendered tool results.
+- Added replayed `current_mode_update` and `usage_update` progress entries so restored sessions keep key ACP status updates visible.
+
+## [0.5.0] - 2026-05-20
+
+- Fixed end-of-turn cumulative diffs to prefer full-file workspace snapshots (with metadata fallbacks) so the `Modified files` review shows whole-file before/after content instead of only reported diff hunks or code blocks.
+- Added chat jump buttons for cumulative changed files while keeping the final `Modified files` review focused on the diff view itself.
+- Extended history/session diff aggregation to understand tool metadata file snapshots in addition to ACP diff blocks.
+
 ## [0.4.19] - 2026-05-21
 
 - Fixed live and replayed diff rendering so repeated ACP diff hunks for the same file coalesce into a single file entry instead of showing duplicate changed-file rows.

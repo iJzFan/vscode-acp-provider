@@ -166,6 +166,7 @@ suite("acpLifecycledChatSessionItemController", () => {
 
     const sessionManager = {
       onDidChangeSession: sessionChangeEmitter.event,
+      createOrGet: async () => ({ session: liveSession }),
       getActive: () => liveSession,
       createSessionUri: (session: { acpSessionId: string }) =>
         MockUri.parse(`acp-agent:/${session.acpSessionId}`),
@@ -233,6 +234,9 @@ suite("acpLifecycledChatSessionItemController", () => {
     const sessionChangeEmitter = new MockEventEmitter<{ modified: unknown }>();
     const sessionManager = {
       onDidChangeSession: sessionChangeEmitter.event,
+      createOrGet: async () => {
+        throw new Error("should not be called without a session resource");
+      },
       getActive: () => undefined,
       createSessionUri: (session: { acpSessionId: string }) =>
         MockUri.parse(`acp-agent:/${session.acpSessionId}`),
@@ -283,6 +287,70 @@ suite("acpLifecycledChatSessionItemController", () => {
 
     assert.equal(newItem.label, "Bound live session");
     assert.equal(newItem.status, 2);
+
+    setChatSessionItemControllerVscodeForTesting(undefined);
+    disposable.dispose();
+  });
+
+  test("initializes a new session item with the real ACP URI when a session resource is available", async () => {
+    const {
+      createAcpChatSessionItemController,
+      setChatSessionItemControllerVscodeForTesting,
+    } = require("./acpLifecycledChatSessionItemController") as typeof import("./acpLifecycledChatSessionItemController");
+    setChatSessionItemControllerVscodeForTesting(mockVscode as any);
+
+    const sessionChangeEmitter = new MockEventEmitter<{ modified: unknown }>();
+    const createdSession = {
+      acpSessionId: "fresh-1",
+      title: "fresh-1",
+      status: 2,
+      vscodeResource: MockUri.parse("acp-agent:/untitled-1"),
+      agent: { id: "agent" },
+      cwd: "g:/workspace",
+      updatedAt: Date.now(),
+    };
+    let createOrGetCalls = 0;
+
+    const sessionManager = {
+      onDidChangeSession: sessionChangeEmitter.event,
+      createOrGet: async (resource: MockUri) => {
+        createOrGetCalls += 1;
+        assert.equal(resource.toString(), "acp-agent:/untitled-new");
+        return { session: createdSession };
+      },
+      getActive: () => undefined,
+      createSessionUri: (session: { acpSessionId: string }) =>
+        MockUri.parse(`acp-agent:/${session.acpSessionId}`),
+      list: async () => [],
+      getSessionChangedFiles: () => [],
+    };
+    const sessionDb = {
+      upsertSession: async () => void 0,
+    };
+    const logger = {
+      debug: () => void 0,
+      error: () => void 0,
+    };
+
+    const disposable = createAcpChatSessionItemController(
+      "acp-agent",
+      "agent",
+      sessionManager as any,
+      sessionDb as any,
+      logger as any,
+    );
+
+    const newItem = await createdController!.newChatSessionItemHandler!({
+      request: {
+        id: "req-new-resource",
+        sessionResource: MockUri.parse("acp-agent:/untitled-new"),
+        prompt: "Start fresh",
+      },
+    });
+
+    assert.equal(createOrGetCalls, 1);
+    assert.equal(newItem.resource.toString(), "acp-agent:/fresh-1");
+    assert.equal(newItem.label, "fresh-1");
 
     setChatSessionItemControllerVscodeForTesting(undefined);
     disposable.dispose();

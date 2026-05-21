@@ -41,6 +41,8 @@ export function trustedCommandMarkdown(content: string): vscode.MarkdownString {
 const DEFAULT_TERMINAL_LANGUAGE = "shell";
 const POWERSHELL_CLIXML_MARKER = "#< CLIXML";
 
+export type ToolLifecyclePhase = "started" | "completed" | "failed";
+
 export type ToolInfo = {
   toolCallId: string;
   name: string;
@@ -119,22 +121,8 @@ export function getToolInfo(
         }
       }
 
-      if (
-        "formatted_output" in toolCallUpdate.rawOutput &&
-        typeof toolCallUpdate.rawOutput.formatted_output === "string"
-      ) {
-        response.output = toolCallUpdate.rawOutput.formatted_output;
-      } else if (
-        "aggregated_output" in toolCallUpdate.rawOutput &&
-        typeof toolCallUpdate.rawOutput.aggregated_output === "string"
-      ) {
-        response.output = toolCallUpdate.rawOutput.aggregated_output;
-      } else if (
-        "output" in toolCallUpdate.rawOutput &&
-        typeof toolCallUpdate.rawOutput.output === "string"
-      ) {
-        response.output = toolCallUpdate.rawOutput.output;
-      } else {
+      response.output = collectStructuredToolOutput(toolCallUpdate.rawOutput);
+      if (!response.output) {
         response.output = `${JSON.stringify(toolCallUpdate.rawOutput, null, 2)}`;
       }
     } else {
@@ -179,13 +167,140 @@ export function getToolInfo(
   return response;
 }
 
+export function formatToolLifecycleSummary(
+  phase: ToolLifecyclePhase,
+  update: ToolCall | ToolCallUpdate,
+  info: ToolInfo,
+): string {
+  const touchedFiles = getToolRelatedPaths(update);
+  const contentTypes = update.content?.map((content) => content.type) ?? [];
+  const summaryParts = [
+    `id=${update.toolCallId}`,
+    `name=${info.name || update.title || "Tool"}`,
+    `kind=${info.kind}`,
+    `status=${update.status ?? "pending"}`,
+    `content=${contentTypes.length ? contentTypes.join(",") : "none"}`,
+    `rawInput=${update.rawInput ? "yes" : "no"}`,
+    `rawOutput=${update.rawOutput ? "yes" : "no"}`,
+    `files=${touchedFiles.length ? touchedFiles.join(", ") : "none"}`,
+  ];
+  return `Tool ${phase}: ${summaryParts.join("; ")}`;
+}
+
+export function formatCurrentModeUpdateSummary(currentModeId: string): string {
+  return `Mode changed: ${currentModeId}`;
+}
+
+export function formatUsageUpdateSummary(update: {
+  used: number;
+  size: number;
+  cost?: { amount: number; currency: string };
+}): string {
+  const percentage = update.size > 0
+    ? Math.round((update.used / update.size) * 1000) / 10
+    : 0;
+  const percentText = Number.isInteger(percentage)
+    ? percentage.toFixed(0)
+    : percentage.toFixed(1);
+  const summaryParts = [
+    `Context window usage: ${formatNumber(update.used)} / ${formatNumber(update.size)} tokens (${percentText}%)`,
+  ];
+  if (update.cost) {
+    summaryParts.push(`Cost: ${update.cost.currency} ${String(update.cost.amount)}`);
+  }
+  return summaryParts.join(" | ");
+}
+
 function sanitizeToolOutput(output: string): string | undefined {
-  const clixmlMarkerIndex = output.indexOf(POWERSHELL_CLIXML_MARKER);
-  const withoutCliXml = clixmlMarkerIndex >= 0
-    ? output.slice(0, clixmlMarkerIndex)
-    : output;
-  const cleaned = withoutCliXml.trimEnd();
-  return cleaned.length > 0 ? cleaned : undefined;
+  const trimmed = output.trimEnd();
+  if (!trimmed.length) {
+    return undefined;
+  }
+
+  const clixmlMarkerIndex = trimmed.indexOf(POWERSHELL_CLIXML_MARKER);
+  if (clixmlMarkerIndex < 0) {
+    return trimmed;
+  }
+
+  const beforeCliXml = trimmed.slice(0, clixmlMarkerIndex).trimEnd();
+  const clixml = trimmed.slice(clixmlMarkerIndex).trim();
+  if (beforeCliXml && clixml) {
+    return `${beforeCliXml}\n\nPowerShell CLIXML:\n${clixml}`;
+  }
+  return beforeCliXml || clixml || undefined;
+}
+
+function collectStructuredToolOutput(rawOutput: object): string | undefined {
+  const candidates = [
+    ["formatted_output", "formatted output"],
+    ["aggregated_output", "aggregated output"],
+    ["output", "raw output"],
+  ] as const;
+
+  const segments: Array<{ label: string; value: string }> = [];
+  for (const [key, label] of candidates) {
+    const value = Reflect.get(rawOutput, key);
+    if (typeof value !== "string") {
+      continue;
+    }
+    const sanitized = sanitizeToolOutput(value);
+    if (!sanitized || segments.some((segment) => segment.value === sanitized)) {
+      continue;
+    }
+    segments.push({ label, value: sanitized });
+  }
+
+  if (segments.length === 0) {
+    return undefined;
+  }
+  if (segments.length === 1) {
+    return segments[0].value;
+  }
+
+  return segments
+    .map((segment) => `=== ${segment.label} ===\n${segment.value}`)
+    .join("\n\n");
+}
+
+function getToolRelatedPaths(update: ToolCall | ToolCallUpdate): string[] {
+  const workspaceRoot = currentWorkspaceRoot();
+  const paths = new Set<string>();
+
+  if (!workspaceRoot) {
+    for (const location of update.locations ?? []) {
+      paths.add(location.path);
+    }
+    for (const content of update.content ?? []) {
+      if (content.type === "diff") {
+        paths.add(content.path);
+      }
+    }
+    return Array.from(paths.values());
+  }
+
+  for (const location of update.locations ?? []) {
+    paths.add(getDisplayPath(location.path, workspaceRoot));
+  }
+
+  for (const content of update.content ?? []) {
+    if (content.type === "diff") {
+      paths.add(getDisplayPath(content.path, workspaceRoot));
+    }
+  }
+
+  return Array.from(paths.values());
+}
+
+function getDisplayPath(rawPath: string, workspaceRoot: vscode.Uri): string {
+  try {
+    return vscode.workspace.asRelativePath(resolveUri(rawPath, workspaceRoot), false);
+  } catch {
+    return rawPath;
+  }
+}
+
+function formatNumber(value: number): string {
+  return new Intl.NumberFormat("en-US").format(value);
 }
 
 type ToolCommandPayload = {

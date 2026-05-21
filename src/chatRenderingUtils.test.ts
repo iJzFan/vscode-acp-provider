@@ -93,6 +93,9 @@ setup(() => {
               uri: MockUri.file(path.join("C:", "workspace")),
             },
           ],
+          asRelativePath: (uri: MockUri) =>
+            path.relative(path.resolve(path.join("C:", "workspace")), uri.fsPath) ||
+            uri.fsPath,
         },
       };
     }
@@ -133,7 +136,7 @@ suite("chatRenderingUtils", () => {
     );
   });
 
-  test("getToolInfo strips trailing PowerShell CLIXML noise from output", () => {
+  test("getToolInfo preserves PowerShell CLIXML details instead of truncating them", () => {
     const info = chatRenderingUtils.getToolInfo({
       toolCallId: "tool-2",
       title: "npm test",
@@ -146,10 +149,12 @@ suite("chatRenderingUtils", () => {
       },
     } as never);
 
-    assert.equal(info.output, "TypeError: boom");
+    assert.match(info.output ?? "", /TypeError: boom/);
+    assert.match(info.output ?? "", /PowerShell CLIXML:/);
+    assert.match(info.output ?? "", /#< CLIXML/);
   });
 
-  test("getToolInfo drops pure PowerShell CLIXML output", () => {
+  test("getToolInfo keeps pure PowerShell CLIXML output when that is all the tool returned", () => {
     const info = chatRenderingUtils.getToolInfo({
       toolCallId: "tool-3",
       title: "npm test",
@@ -161,6 +166,26 @@ suite("chatRenderingUtils", () => {
       },
     } as never);
 
-    assert.equal(info.output, undefined);
+    assert.match(info.output ?? "", /#< CLIXML/);
+  });
+
+  test("getToolInfo keeps distinct structured output fields instead of dropping later ones", () => {
+    const info = chatRenderingUtils.getToolInfo({
+      toolCallId: "tool-4",
+      title: "npm test",
+      kind: "execute",
+      status: "completed",
+      rawOutput: {
+        command: ["npm", "test"],
+        formatted_output: "stdout line",
+        aggregated_output: "stdout line",
+        output: "stderr line",
+      },
+    } as never);
+
+    assert.match(info.output ?? "", /=== formatted output ===/);
+    assert.match(info.output ?? "", /=== raw output ===/);
+    assert.match(info.output ?? "", /stdout line/);
+    assert.match(info.output ?? "", /stderr line/);
   });
 });
