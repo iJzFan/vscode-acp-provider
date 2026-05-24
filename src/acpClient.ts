@@ -358,6 +358,24 @@ class AcpClientImpl extends DisposableBase implements AcpClient {
       };
       this._onDidOptionsChanged.fire();
     }
+    if (update.sessionUpdate === "config_option_update") {
+      this.configOptions = update.configOptions;
+      const modeValue = findConfigOptionCurrentValue(this.configOptions, "mode");
+      if (modeValue && this.supportedModeState) {
+        this.supportedModeState = {
+          ...this.supportedModeState,
+          currentModeId: modeValue,
+        };
+      }
+      const modelValue = findConfigOptionCurrentValue(this.configOptions, "model");
+      if (modelValue && this.supportedModelState) {
+        this.supportedModelState = {
+          ...this.supportedModelState,
+          currentModelId: modelValue,
+        };
+      }
+      this._onDidOptionsChanged.fire();
+    }
     this.onSessionUpdateEmitter.fire(notification);
   }
 
@@ -365,6 +383,11 @@ class AcpClientImpl extends DisposableBase implements AcpClient {
     await this.ensureReady(this.mode);
     if (!this.connection) {
       throw new Error("ACP connection is not ready");
+    }
+    const modeConfigOption = findConfigOption(this.configOptions, "mode");
+    if (modeConfigOption) {
+      await this.setSessionConfigOption(sessionId, modeConfigOption.id, modeId);
+      return;
     }
     const resuest: SetSessionModeRequest = {
       modeId,
@@ -377,6 +400,16 @@ class AcpClientImpl extends DisposableBase implements AcpClient {
     await this.ensureReady(this.mode);
     if (!this.connection) {
       throw new Error("ACP connection is not ready");
+    }
+
+    const modelConfigOption = findConfigOption(this.configOptions, "model");
+    if (modelConfigOption) {
+      await this.setSessionConfigOption(
+        sessionId,
+        modelConfigOption.id,
+        modelId,
+      );
+      return;
     }
 
     const request: SetSessionModelRequest = {
@@ -706,6 +739,23 @@ function isUnsupportedSetThinkError(message: string): boolean {
     normalized.includes("-32601");
 
   return mentionsMethod && indicatesUnsupported;
+}
+
+function findConfigOption(
+  options: readonly SessionConfigOption[],
+  category: string,
+): SessionConfigOption | undefined {
+  return options.find(
+    (option) => option.category === category || option.id === category,
+  );
+}
+
+function findConfigOptionCurrentValue(
+  options: readonly SessionConfigOption[],
+  category: string,
+): string | undefined {
+  const value = findConfigOption(options, category)?.currentValue;
+  return typeof value === "string" && value.length > 0 ? value : undefined;
 }
 
 function formatAuthMethodSummary(response: InitializeResponse): string {

@@ -21,6 +21,7 @@ import {
 import { scanSkillDirectories } from "./skillDiscovery";
 import {
   type AvailableCommand,
+  type SessionConfigOption,
   SessionModelState,
   SessionModeState,
   type SessionNotification,
@@ -149,6 +150,7 @@ export class Session {
 export type Options = {
   modes: SessionModeState | null;
   models: SessionModelState | null;
+  configOptions: SessionConfigOption[];
 };
 
 export type SetThinkResult = {
@@ -576,6 +578,7 @@ class SessionManager extends DisposableBase implements AcpSessionManager {
     const options: Options = {
       modes,
       models,
+      configOptions: this.client.getConfigOptions(),
     };
     return options;
   }

@@ -1,6 +1,11 @@
 // SPDX-License-Identifier: Apache-2.0
 import * as vscode from "vscode";
 import { Uri } from "vscode";
+import type {
+  SessionConfigOption,
+  SessionConfigSelectGroup,
+  SessionConfigSelectOption,
+} from "@agentclientprotocol/sdk";
 import { AcpChatParticipant } from "./acpChatParticipant";
 import {
   AcpSessionManager,
@@ -71,6 +76,7 @@ export class AcpChatSessionContentProvider
       options: {
         [VscodeSessionOptions.Mode]: acpSession.defaultChatOptions.modeId,
         [VscodeSessionOptions.Model]: acpSession.defaultChatOptions.modelId,
+        ...getConfigOptionCurrentValues(acpSession.client.getConfigOptions()),
         ...(this.supportsLiveThinkingEffort === false
           ? {}
           : {
@@ -99,7 +105,8 @@ export class AcpChatSessionContentProvider
     };
 
     const modeState = options.modes;
-    if (modeState) {
+    const configOptionKeys = getConfigOptionKeys(options.configOptions);
+    if (modeState && !hasConfigOption(configOptionKeys, VscodeSessionOptions.Mode)) {
       const modeOptions: vscode.ChatSessionProviderOptionItem[] =
         modeState.availableModes.map((mode) => ({
           id: mode.id,
@@ -115,7 +122,7 @@ export class AcpChatSessionContentProvider
     }
 
     const modelState = options.models;
-    if (modelState) {
+    if (modelState && !hasConfigOption(configOptionKeys, VscodeSessionOptions.Model)) {
       const modelOptions: vscode.ChatSessionProviderOptionItem[] =
         modelState.availableModels.map((model) => ({
           id: model.modelId,
@@ -130,7 +137,18 @@ export class AcpChatSessionContentProvider
       });
     }
 
-    if (this.supportsLiveThinkingEffort !== false) {
+    for (const configOption of options.configOptions) {
+      const group = toChatSessionProviderOptionGroup(configOption);
+      if (group) {
+        responseOptions.optionGroups?.push(group);
+      }
+    }
+
+    if (
+      this.supportsLiveThinkingEffort !== false &&
+      !hasConfigOption(configOptionKeys, "thought_level") &&
+      !hasConfigOption(configOptionKeys, VscodeSessionOptions.Think)
+    ) {
       responseOptions.optionGroups?.push({
         id: VscodeSessionOptions.Think,
         name: vscode.l10n.t("Thinking"),
@@ -177,6 +195,25 @@ export class AcpChatSessionContentProvider
     }
 
     for (const update of updates) {
+      const configOption = session.client
+        .getConfigOptions()
+        .find((option) => option.id === update.optionId);
+      if (configOption && update.value !== undefined) {
+        await session.client.setSessionConfigOption(
+          session.acpSessionId,
+          configOption.id,
+          update.value,
+        );
+        if (isConfigOptionCategory(configOption, VscodeSessionOptions.Mode)) {
+          session.defaultChatOptions.modeId = update.value;
+        } else if (
+          isConfigOptionCategory(configOption, VscodeSessionOptions.Model)
+        ) {
+          session.defaultChatOptions.modelId = update.value;
+        }
+        continue;
+      }
+
       if (update.optionId === VscodeSessionOptions.Mode && update.value) {
         await session.client.changeMode(session.acpSessionId, update.value);
       }
@@ -214,5 +251,126 @@ export class AcpChatSessionContentProvider
     this._onDidChangeChatSessionOptions.dispose();
     this._onDidChangeChatSessionProviderOptions.dispose();
     super.dispose();
+  }
+}
+
+type ConfigOptionKeys = {
+  ids: Set<string>;
+  categories: Set<string>;
+};
+
+function getConfigOptionKeys(
+  configOptions: readonly SessionConfigOption[],
+): ConfigOptionKeys {
+  const ids = new Set<string>();
+  const categories = new Set<string>();
+  for (const option of configOptions) {
+    ids.add(option.id);
+    if (option.category) {
+      categories.add(option.category);
+    }
+  }
+  return { ids, categories };
+}
+
+function hasConfigOption(keys: ConfigOptionKeys, idOrCategory: string): boolean {
+  return keys.ids.has(idOrCategory) || keys.categories.has(idOrCategory);
+}
+
+function isConfigOptionCategory(
+  configOption: SessionConfigOption,
+  category: string,
+): boolean {
+  return configOption.category === category || configOption.id === category;
+}
+
+function getConfigOptionCurrentValues(
+  configOptions: readonly SessionConfigOption[],
+): Record<string, string> {
+  const values: Record<string, string> = {};
+  for (const option of configOptions) {
+    values[option.id] = option.currentValue;
+  }
+  return values;
+}
+
+function toChatSessionProviderOptionGroup(
+  configOption: SessionConfigOption,
+): vscode.ChatSessionProviderOptionGroup | undefined {
+  const items = flattenConfigOptionItems(configOption);
+  if (!items.length) {
+    return undefined;
+  }
+
+  return {
+    id: configOption.id,
+    name: configOption.name || getConfigOptionFallbackName(configOption),
+    description:
+      configOption.description ??
+      getConfigOptionFallbackDescription(configOption),
+    items,
+  };
+}
+
+function flattenConfigOptionItems(
+  configOption: SessionConfigOption,
+): vscode.ChatSessionProviderOptionItem[] {
+  const items: vscode.ChatSessionProviderOptionItem[] = [];
+  for (const optionOrGroup of configOption.options) {
+    if (isSessionConfigSelectGroup(optionOrGroup)) {
+      for (const option of optionOrGroup.options) {
+        items.push(toProviderOptionItem(option, configOption.currentValue, optionOrGroup));
+      }
+    } else {
+      items.push(toProviderOptionItem(optionOrGroup, configOption.currentValue));
+    }
+  }
+  return items;
+}
+
+function isSessionConfigSelectGroup(
+  value: SessionConfigSelectOption | SessionConfigSelectGroup,
+): value is SessionConfigSelectGroup {
+  return "group" in value && Array.isArray(value.options);
+}
+
+function toProviderOptionItem(
+  option: SessionConfigSelectOption,
+  currentValue: string,
+  group?: SessionConfigSelectGroup,
+): vscode.ChatSessionProviderOptionItem {
+  return {
+    id: option.value,
+    name: group ? `${group.name}: ${option.name}` : option.name,
+    description: option.description ?? undefined,
+    default: option.value === currentValue,
+  };
+}
+
+function getConfigOptionFallbackName(configOption: SessionConfigOption): string {
+  switch (configOption.category) {
+    case VscodeSessionOptions.Mode:
+      return vscode.l10n.t("Mode");
+    case VscodeSessionOptions.Model:
+      return vscode.l10n.t("Model");
+    case "thought_level":
+      return vscode.l10n.t("Thinking");
+    default:
+      return configOption.id;
+  }
+}
+
+function getConfigOptionFallbackDescription(
+  configOption: SessionConfigOption,
+): string | undefined {
+  switch (configOption.category) {
+    case VscodeSessionOptions.Mode:
+      return vscode.l10n.t("Select the mode for the chat session");
+    case VscodeSessionOptions.Model:
+      return vscode.l10n.t("Select the model for the chat session");
+    case "thought_level":
+      return vscode.l10n.t("Configure the thinking / reasoning effort");
+    default:
+      return undefined;
   }
 }

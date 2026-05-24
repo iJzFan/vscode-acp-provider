@@ -302,6 +302,10 @@ class PreprogrammedAcpClient extends DisposableBase implements AcpClient {
       this.modes = { ...this.modes, currentModeId: update.currentModeId };
       this._onDidOptionsChanged.fire();
     }
+    if (update.sessionUpdate === "config_option_update") {
+      this.configOptions = [...update.configOptions];
+      this._onDidOptionsChanged.fire();
+    }
     this.onSessionUpdateEmitter.fire(this.ensureSessionId(notification));
   }
 

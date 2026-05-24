@@ -1,3 +1,10 @@
+## [0.6.0] - 2026-05-25
+
+- Downloaded and probed `formulahendry/acp-agent-monitor` plus `formulahendry/vscode-acp`; captured local OpenCode `1.15.7` and Auggie `0.28.0-prerelease.5` ACP initialize snapshots for compatibility checks.
+- Added reference-aligned ACP Session Config Options support so agent-advertised selectors such as model, mode, reasoning/thought level, and custom select options can appear in VS Code chat session options.
+- Routed mode/model changes through `session/set_config_option` when agents advertise config options, while keeping legacy `session/set_mode` / `unstable_setSessionModel` fallbacks for older agents.
+- Synced `config_option_update` notifications into live provider options and added regression coverage for rendering dynamic config option groups and handling user changes.
+
 ## [0.5.10] - 2026-05-22
 
 - Fixed Auggie ACP execute-tool rendering for real wrapped PowerShell results by unwrapping `<return-code>` / `<output>` envelopes, parsing exit codes, and stripping trailing CLIXML progress blobs before they reach the chat UI.
