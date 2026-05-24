@@ -1,3 +1,8 @@
+## [0.6.4] - 2026-05-25
+
+- Added Copilot-style welcome titles, welcome messages, input placeholders, and stable ordering to the ACP chat session contributions so each configured agent has clearer session-picker and new-chat guidance.
+- Kept attachment capability declarations conservative while aligning the manifest UX with the local Copilot extension reference.
+
 ## [0.6.3] - 2026-05-25
 
 - Fixed a session-list regression where an existing named session resource could be treated as stale and converted into a fresh untitled session, causing repeated unwanted ACP session creation.

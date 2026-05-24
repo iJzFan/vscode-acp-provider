@@ -2,7 +2,7 @@
   "name": "vscode-acp-client",
   "displayName": "VS Code ACP Client",
   "description": "Chat sessions backed by Agent Client Protocol (ACP) agents and CLIs",
-  "version": "0.6.3",
+  "version": "0.6.4",
   "publisher": "org-gap",
   "repository": {
     "type": "git",
@@ -57,6 +57,10 @@
           }
         ],
         "icon": "$(hubot)",
+        "welcomeTitle": "OpenCode ACP Agent",
+        "welcomeMessage": "Run local coding tasks with the OpenCode ACP agent.",
+        "inputPlaceholder": "Ask OpenCode to work in this workspace, type `#` to add context",
+        "order": 10,
         "when": "config.acpClient.agents.opencode.enabled",
         "capabilities": {
           "supportsFileAttachments": true
@@ -75,6 +79,10 @@
           }
         ],
         "icon": "$(hubot)",
+        "welcomeTitle": "Codex ACP Agent",
+        "welcomeMessage": "Run local coding tasks with the Codex ACP agent.",
+        "inputPlaceholder": "Ask Codex to work in this workspace, type `#` to add context",
+        "order": 20,
         "when": "config.acpClient.agents.codex.enabled",
         "capabilities": {
           "supportsFileAttachments": true
@@ -93,6 +101,10 @@
           }
         ],
         "icon": "$(hubot)",
+        "welcomeTitle": "Cagent ACP Agent",
+        "welcomeMessage": "Run local coding tasks with the Cagent ACP agent.",
+        "inputPlaceholder": "Ask Cagent to work in this workspace, type `#` to add context",
+        "order": 30,
         "when": "config.acpClient.agents.cagent.enabled",
         "capabilities": {
           "supportsFileAttachments": true
@@ -111,6 +123,10 @@
           }
         ],
         "icon": "$(hubot)",
+        "welcomeTitle": "Gemini ACP Agent",
+        "welcomeMessage": "Run local coding tasks with the Gemini CLI ACP agent.",
+        "inputPlaceholder": "Ask Gemini to work in this workspace, type `#` to add context",
+        "order": 40,
         "when": "config.acpClient.agents.geminicli.enabled",
         "capabilities": {
           "supportsFileAttachments": true
@@ -129,6 +145,10 @@
           }
         ],
         "icon": "$(hubot)",
+        "welcomeTitle": "Claude Code ACP Agent",
+        "welcomeMessage": "Run local coding tasks with the Claude Code ACP agent.",
+        "inputPlaceholder": "Ask Claude Code to work in this workspace, type `#` to add context",
+        "order": 50,
         "when": "config.acpClient.agents.claude.enabled",
         "capabilities": {
           "supportsFileAttachments": true
@@ -147,6 +167,10 @@
           }
         ],
         "icon": "$(hubot)",
+        "welcomeTitle": "Auggie ACP Agent",
+        "welcomeMessage": "Run local coding tasks with the Auggie CLI ACP agent.",
+        "inputPlaceholder": "Ask Auggie to work in this workspace, type `#` to add context",
+        "order": 60,
         "when": "config.acpClient.agents.auggie.enabled",
         "capabilities": {
           "supportsFileAttachments": true
@@ -165,6 +189,10 @@
           }
         ],
         "icon": "$(hubot)",
+        "welcomeTitle": "Mistral Vibe ACP Agent",
+        "welcomeMessage": "Run local coding tasks with the Mistral Vibe ACP agent.",
+        "inputPlaceholder": "Ask Mistral Vibe to work in this workspace, type `#` to add context",
+        "order": 70,
         "when": "config.acpClient.agents.vibe.enabled",
         "capabilities": {
           "supportsFileAttachments": true
@@ -183,6 +211,10 @@
           }
         ],
         "icon": "$(hubot)",
+        "welcomeTitle": "Copilot ACP Agent",
+        "welcomeMessage": "Run local coding tasks with the Copilot ACP agent.",
+        "inputPlaceholder": "Ask Copilot to work in this workspace, type `#` to add context",
+        "order": 80,
         "when": "config.acpClient.agents.copilot.enabled",
         "capabilities": {
           "supportsFileAttachments": true
