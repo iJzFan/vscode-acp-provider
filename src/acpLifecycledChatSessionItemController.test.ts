@@ -241,6 +241,133 @@ suite("acpLifecycledChatSessionItemController", () => {
     disposable.dispose();
   });
 
+  test("creates a visible item for an in-progress session created outside the item controller", async () => {
+    const {
+      createAcpChatSessionItemController,
+      setChatSessionItemControllerVscodeForTesting,
+    } =
+      require("./acpLifecycledChatSessionItemController") as typeof import("./acpLifecycledChatSessionItemController");
+    setChatSessionItemControllerVscodeForTesting(mockVscode as any);
+
+    const sessionChangeEmitter = new MockEventEmitter<{ modified: unknown }>();
+    const liveSession = {
+      acpSessionId: "content-created-1",
+      title: "Content-created session",
+      status: 2,
+      vscodeResource: MockUri.parse("acp-agent:/untitled-content-created"),
+      agent: { id: "agent" },
+      cwd: "g:/workspace",
+      updatedAt: Date.now(),
+    };
+    let createSessionUriCalls = 0;
+
+    const sessionManager = {
+      onDidChangeSession: sessionChangeEmitter.event,
+      createOrGet: async () => ({ session: liveSession }),
+      getActive: () => liveSession,
+      createSessionUri: (session: { acpSessionId: string }) => {
+        createSessionUriCalls += 1;
+        return MockUri.parse(`acp-agent:/${session.acpSessionId}`);
+      },
+      list: async () => [],
+      getSessionChangedFiles: () => [],
+    };
+    const sessionDb = {
+      upsertSession: async () => void 0,
+    };
+    const logger = {
+      debug: () => void 0,
+      error: () => void 0,
+    };
+
+    const disposable = createAcpChatSessionItemController(
+      "acp-agent",
+      "agent",
+      sessionManager as any,
+      sessionDb as any,
+      logger as any,
+    );
+
+    sessionChangeEmitter.fire({ modified: liveSession });
+    await capturedRefreshHandler?.({});
+
+    assert.equal(createSessionUriCalls, 1);
+    assert.deepEqual(
+      lastReplacedItems.map((item) => item.resource.toString()),
+      ["acp-agent:/content-created-1"],
+    );
+    assert.equal(lastReplacedItems[0]?.label, "Content-created session");
+    assert.equal(lastReplacedItems[0]?.status, 2);
+
+    setChatSessionItemControllerVscodeForTesting(undefined);
+    disposable.dispose();
+  });
+
+  test("prefers an active item over a stale disk item for the same session", async () => {
+    const {
+      createAcpChatSessionItemController,
+      setChatSessionItemControllerVscodeForTesting,
+    } =
+      require("./acpLifecycledChatSessionItemController") as typeof import("./acpLifecycledChatSessionItemController");
+    setChatSessionItemControllerVscodeForTesting(mockVscode as any);
+
+    const sessionChangeEmitter = new MockEventEmitter<{ modified: unknown }>();
+    const runningSession = {
+      acpSessionId: "saved-running-1",
+      title: "Running saved session",
+      status: 2,
+      vscodeResource: MockUri.parse("acp-agent:/saved-running-1"),
+      agent: { id: "agent" },
+      cwd: "g:/workspace",
+      updatedAt: Date.now(),
+    };
+
+    const sessionManager = {
+      onDidChangeSession: sessionChangeEmitter.event,
+      createOrGet: async () => ({ session: runningSession }),
+      getActive: () => runningSession,
+      createSessionUri: (session: { acpSessionId: string }) =>
+        MockUri.parse(`acp-agent:/${session.acpSessionId}`),
+      list: async () => [
+        {
+          resource: MockUri.parse("acp-agent:/saved-running-1"),
+          label: "Stale completed session",
+          status: 1,
+          changes: [],
+        },
+      ],
+      getSessionChangedFiles: () => [],
+    };
+    const sessionDb = {
+      upsertSession: async () => void 0,
+    };
+    const logger = {
+      debug: () => void 0,
+      error: () => void 0,
+    };
+
+    const disposable = createAcpChatSessionItemController(
+      "acp-agent",
+      "agent",
+      sessionManager as any,
+      sessionDb as any,
+      logger as any,
+    );
+
+    sessionChangeEmitter.fire({ modified: runningSession });
+    await capturedRefreshHandler?.({});
+
+    assert.deepEqual(
+      lastReplacedItems.map((item) => item.resource.toString()),
+      ["acp-agent:/saved-running-1"],
+    );
+    assert.equal(lastReplacedItems[0]?.label, "Running saved session");
+    assert.equal(lastReplacedItems[0]?.status, 2);
+
+    setChatSessionItemControllerVscodeForTesting(undefined);
+    disposable.dispose();
+  });
+
   test("creates a placeholder item when sessionResource is unavailable", async () => {
     const {
       createAcpChatSessionItemController,
@@ -338,6 +465,7 @@ suite("acpLifecycledChatSessionItemController", () => {
         return { session: createdSession };
       },
       getActive: () => undefined,
+      get: async () => undefined,
       createSessionUri: (session: { acpSessionId: string }) =>
         MockUri.parse(`acp-agent:/${session.acpSessionId}`),
       list: async () => [],
@@ -375,6 +503,70 @@ suite("acpLifecycledChatSessionItemController", () => {
     disposable.dispose();
   });
 
+  test("reuses an existing named session resource instead of starting a new session", async () => {
+    const {
+      createAcpChatSessionItemController,
+      setChatSessionItemControllerVscodeForTesting,
+    } =
+      require("./acpLifecycledChatSessionItemController") as typeof import("./acpLifecycledChatSessionItemController");
+    setChatSessionItemControllerVscodeForTesting(mockVscode as any);
+
+    const sessionChangeEmitter = new MockEventEmitter<{ modified: unknown }>();
+    const existingSession = {
+      acpSessionId: "existing-1",
+      title: "existing-1",
+      status: 2,
+      vscodeResource: MockUri.parse("acp-agent:/existing-1"),
+      agent: { id: "agent" },
+      cwd: "g:/workspace",
+      updatedAt: Date.now(),
+    };
+    let seenResource = "";
+
+    const sessionManager = {
+      onDidChangeSession: sessionChangeEmitter.event,
+      createOrGet: async (resource: MockUri) => {
+        seenResource = resource.toString();
+        return { session: existingSession };
+      },
+      getActive: () => existingSession,
+      get: async () => undefined,
+      createSessionUri: (session: { acpSessionId: string }) =>
+        MockUri.parse(`acp-agent:/${session.acpSessionId}`),
+      list: async () => [],
+      getSessionChangedFiles: () => [],
+    };
+    const sessionDb = {
+      upsertSession: async () => void 0,
+    };
+    const logger = {
+      debug: () => void 0,
+      error: () => void 0,
+    };
+
+    const disposable = createAcpChatSessionItemController(
+      "acp-agent",
+      "agent",
+      sessionManager as any,
+      sessionDb as any,
+      logger as any,
+    );
+
+    const item = await createdController!.newChatSessionItemHandler!({
+      request: {
+        id: "req-existing",
+        sessionResource: MockUri.parse("acp-agent:/existing-1"),
+        prompt: "Continue existing",
+      },
+    });
+
+    assert.equal(seenResource, "acp-agent:/existing-1");
+    assert.equal(item.resource.toString(), "acp-agent:/existing-1");
+
+    setChatSessionItemControllerVscodeForTesting(undefined);
+    disposable.dispose();
+  });
+
   test("ignores a stale named session resource and starts a fresh untitled session", async () => {
     const {
       createAcpChatSessionItemController,
@@ -402,6 +594,7 @@ suite("acpLifecycledChatSessionItemController", () => {
         return { session: createdSession };
       },
       getActive: () => undefined,
+      get: async () => undefined,
       createSessionUri: (session: { acpSessionId: string }) =>
         MockUri.parse(`acp-agent:/${session.acpSessionId}`),
       list: async () => [],

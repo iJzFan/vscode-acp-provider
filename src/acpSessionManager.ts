@@ -308,6 +308,7 @@ class SessionManager extends DisposableBase implements AcpSessionManager {
     string,
     Map<string, ToolDiffArtifact>
   >();
+  private readonly resourceAliases = new Map<string, string>();
   private probeSession: {
     acpSessionId: string;
     modes: SessionModeState | null;
@@ -316,6 +317,7 @@ class SessionManager extends DisposableBase implements AcpSessionManager {
 
   createSessionUri(session: Session): vscode.Uri {
     const uri = createSessionUri(this.agent.id, session.acpSessionId);
+    const previousResource = session.vscodeResource.toString();
     // find and replace the session with new session id in active sessions
     const entry = Array.from(this.activeSessions).find(
       (s) => s[1].acpSessionId === session.acpSessionId,
@@ -329,6 +331,9 @@ class SessionManager extends DisposableBase implements AcpSessionManager {
       this.logger.debug(
         `Created session URI for session id ${session.acpSessionId} without replacement`,
       );
+    }
+    if (previousResource !== uri.toString()) {
+      this.resourceAliases.set(previousResource, session.acpSessionId);
     }
     session.vscodeResource = uri;
     this.activeSessions.set(session.acpSessionId, session);
@@ -345,9 +350,9 @@ class SessionManager extends DisposableBase implements AcpSessionManager {
     // Always consult the active map before hitting disk or the agent. This keeps
     // VS Code refreshes, sidebar reopens, and back-to-list navigations attached
     // to the same live ACP session instead of spawning duplicate processes.
-    const activeSession = this.activeSessions.get(decodedResource.sessionId);
-    if (activeSession) {
-      return { session: activeSession };
+    const activeSessionEntry = this.findActiveSessionEntry(vscodeResource);
+    if (activeSessionEntry) {
+      return { session: activeSessionEntry[1] };
     }
 
     if (decodedResource.isUntitled) {
@@ -397,7 +402,10 @@ class SessionManager extends DisposableBase implements AcpSessionManager {
       if (thinkingSettings?.thinkingModeEnabled) {
         session.setThinkState(true, thinkingSettings.thinkingConfig ?? "think");
       }
-      this.activeSessions.set(decodedResource.sessionId, session);
+      this.activeSessions.set(
+        this.getActiveSessionKey(vscodeResource),
+        session,
+      );
 
       const expectedOriginal = new Session(
         session.agent,
@@ -435,7 +443,10 @@ class SessionManager extends DisposableBase implements AcpSessionManager {
               modelId: response.modelId || "",
             },
           );
-          this.activeSessions.set(decodedResource.sessionId, session);
+          this.activeSessions.set(
+            this.getActiveSessionKey(vscodeResource),
+            session,
+          );
 
           const turnBuilder = new TurnBuilder(this.agent.id, this.logger);
           response.notifications.forEach((notification) =>
@@ -498,7 +509,10 @@ class SessionManager extends DisposableBase implements AcpSessionManager {
       if (thinkingSettings?.thinkingModeEnabled) {
         session.setThinkState(true, thinkingSettings.thinkingConfig ?? "think");
       }
-      this.activeSessions.set(decodedResource.sessionId, session);
+      this.activeSessions.set(
+        this.getActiveSessionKey(vscodeResource),
+        session,
+      );
 
       const expectedOriginal = new Session(
         session.agent,
@@ -525,8 +539,7 @@ class SessionManager extends DisposableBase implements AcpSessionManager {
   }
 
   getActive(vscodeResource: vscode.Uri): Session | undefined {
-    const decodedResource = decodeVscodeResource(vscodeResource);
-    return this.activeSessions.get(decodedResource.sessionId);
+    return this.findActiveSessionEntry(vscodeResource)?.[1];
   }
 
   async list(): Promise<vscode.ChatSessionItem[]> {
@@ -557,7 +570,8 @@ class SessionManager extends DisposableBase implements AcpSessionManager {
     modified: Session,
   ): Promise<void> {
     const decoded = decodeVscodeResource(vscodeResource);
-    const session = this.activeSessions.get(decoded.sessionId);
+    const activeEntry = this.findActiveSessionEntry(vscodeResource, modified);
+    const session = activeEntry?.[1];
 
     if (!session) {
       this.logger.warn(
@@ -566,14 +580,15 @@ class SessionManager extends DisposableBase implements AcpSessionManager {
       return;
     }
 
-    this.activeSessions.set(decoded.sessionId, modified);
+    this.activeSessions.set(activeEntry[0], modified);
     this._onDidChangeSession.fire({
       original: session,
       modified: modified,
     });
 
     if (decoded.isUntitled && this.isTerminalSessionStatus(modified.status)) {
-      this.activeSessions.delete(decoded.sessionId);
+      this.activeSessions.delete(activeEntry[0]);
+      this.deleteAliasesForSession(modified.acpSessionId);
       this.logger.debug(
         `Released untitled session cache for session ${modified.acpSessionId} after terminal state ${modified.status}`,
       );
@@ -597,8 +612,7 @@ class SessionManager extends DisposableBase implements AcpSessionManager {
     enabled: boolean,
     config?: ThinkConfig,
   ): Promise<SetThinkResult> {
-    const decoded = decodeVscodeResource(vscodeResource);
-    const session = this.activeSessions.get(decoded.sessionId);
+    const session = this.findActiveSessionEntry(vscodeResource)?.[1];
 
     if (!session) {
       this.logger.warn(
@@ -869,6 +883,7 @@ class SessionManager extends DisposableBase implements AcpSessionManager {
     if (!this.activeSessions.size) {
       this.probeSession = null;
       this.availableCommands.clear();
+      this.resourceAliases.clear();
       return;
     }
 
@@ -882,6 +897,7 @@ class SessionManager extends DisposableBase implements AcpSessionManager {
 
     this.activeSessions.clear();
     this.availableCommands.clear();
+    this.resourceAliases.clear();
     this.probeSession = null;
 
     this.logger.warn(
@@ -896,19 +912,22 @@ class SessionManager extends DisposableBase implements AcpSessionManager {
   }
 
   closeSession(vscodeResource: vscode.Uri): void {
-    const decoded = decodeVscodeResource(vscodeResource);
-    const session = this.activeSessions.get(decoded.sessionId);
+    const activeEntry = this.findActiveSessionEntry(vscodeResource);
+    const session = activeEntry?.[1];
     if (!session) {
       return;
     }
     session.markAsFailed();
     this._onDidChangeSession.fire({ original: session, modified: session });
 
-    this.disposeSessionClient(decoded.sessionId, session);
-    this.activeSessions.delete(decoded.sessionId);
-    this.availableCommands.delete(decoded.sessionId);
-    this.cumulativeToolDiffs.delete(decoded.sessionId);
-    this.logger.info(`Closed session and killed process: ${decoded.sessionId}`);
+    this.disposeSessionClient(activeEntry[0], session);
+    this.activeSessions.delete(activeEntry[0]);
+    this.availableCommands.delete(session.acpSessionId);
+    this.cumulativeToolDiffs.delete(session.acpSessionId);
+    this.deleteAliasesForSession(session.acpSessionId);
+    this.logger.info(
+      `Closed session and killed process: ${session.acpSessionId}`,
+    );
   }
 
   recordToolDiffArtifacts(
@@ -965,7 +984,61 @@ class SessionManager extends DisposableBase implements AcpSessionManager {
     this.diskSessions?.clear();
     this.availableCommands.clear();
     this.cumulativeToolDiffs.clear();
+    this.resourceAliases.clear();
     this._onDidChangeSession.dispose();
     this._onDidChangeOptions.dispose();
+  }
+
+  private getActiveSessionKey(vscodeResource: vscode.Uri): string {
+    const decoded = decodeVscodeResource(vscodeResource);
+    return decoded.isUntitled ? vscodeResource.toString() : decoded.sessionId;
+  }
+
+  private findActiveSessionEntry(
+    vscodeResource: vscode.Uri,
+    expectedSession?: Session,
+  ): [string, Session] | undefined {
+    const directKey = this.getActiveSessionKey(vscodeResource);
+    const directSession = this.activeSessions.get(directKey);
+    if (directSession) {
+      return [directKey, directSession];
+    }
+
+    const aliasSessionId = this.resourceAliases.get(vscodeResource.toString());
+    if (aliasSessionId) {
+      const aliasSession = this.activeSessions.get(aliasSessionId);
+      if (aliasSession) {
+        return [aliasSessionId, aliasSession];
+      }
+    }
+
+    const decoded = decodeVscodeResource(vscodeResource);
+    if (decoded.isUntitled) {
+      const legacyUntitledSession = this.activeSessions.get(decoded.sessionId);
+      if (
+        legacyUntitledSession?.vscodeResource.toString() ===
+        vscodeResource.toString()
+      ) {
+        return [decoded.sessionId, legacyUntitledSession];
+      }
+    }
+
+    if (expectedSession) {
+      return Array.from(this.activeSessions).find(
+        ([, session]) =>
+          session === expectedSession ||
+          session.acpSessionId === expectedSession.acpSessionId,
+      );
+    }
+
+    return undefined;
+  }
+
+  private deleteAliasesForSession(sessionId: string): void {
+    for (const [resource, aliasedSessionId] of this.resourceAliases) {
+      if (aliasedSessionId === sessionId) {
+        this.resourceAliases.delete(resource);
+      }
+    }
   }
 }

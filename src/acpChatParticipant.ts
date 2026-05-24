@@ -289,6 +289,7 @@ export class AcpChatParticipant extends DisposableBase {
       return;
     }
     session.markAsInProgress();
+    await this.sessionManager.syncSessionState(sessionResource, session);
 
     if (request.prompt.trim() === LIST_COMMANDS_PROMPT) {
       this.renderAvailableCommands(session, response);

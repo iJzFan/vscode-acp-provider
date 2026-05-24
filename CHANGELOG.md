@@ -1,3 +1,14 @@
+## [0.6.3] - 2026-05-25
+
+- Fixed a session-list regression where an existing named session resource could be treated as stale and converted into a fresh untitled session, causing repeated unwanted ACP session creation.
+- Reused active or persisted named session resources before falling back to stale-resource recovery, while keeping the stale named-resource safeguard for unknown sessions.
+
+## [0.6.2] - 2026-05-25
+
+- Fixed active ACP sessions disappearing from the session list when the chat content provider created the session before the session-item controller had an item to track.
+- Preserved multiple concurrent untitled ACP sessions by keying live untitled resources independently while keeping aliases after a session is committed to its durable ACP URI.
+- Synced session state at request start so reopened or persisted sessions show as in progress while an agent is still responding, and active items now override stale disk entries during list refresh.
+
 ## [0.6.1] - 2026-05-25
 
 - Cleaned the public repository surface by removing stale investigation artifacts from the root and the legacy ACP diff review bundle.

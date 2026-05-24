@@ -49,7 +49,7 @@ class LifecycledChatSessionItemController extends DisposableBase {
     );
 
     this.controller.newChatSessionItemHandler = async (context, _token) => {
-      const sessionResource = this.getFreshSessionResource(
+      const sessionResource = await this.resolveInitialSessionResource(
         context.request.sessionResource,
         context.request.id,
       );
@@ -128,6 +128,18 @@ class LifecycledChatSessionItemController extends DisposableBase {
             );
           }
         }
+        if (!inProgressItem) {
+          const uri = this.sessionManager.createSessionUri(modified);
+          inProgressItem = this.controller.createChatSessionItem(
+            uri,
+            modified.title,
+          );
+          this.inProgressItems.set(modified.acpSessionId, inProgressItem);
+          key = modified.acpSessionId;
+          this.logger.debug(
+            `Created missing session-list item for active session ${modified.acpSessionId}`,
+          );
+        }
         if (inProgressItem) {
           // Mutate in-place — VS Code fires onDidChangeChatSessionItemState automatically
           inProgressItem.label = modified.title;
@@ -179,10 +191,10 @@ class LifecycledChatSessionItemController extends DisposableBase {
     );
   }
 
-  private getFreshSessionResource(
+  private async resolveInitialSessionResource(
     providedResource: vscode.Uri | undefined,
     requestId: string,
-  ): vscode.Uri | undefined {
+  ): Promise<vscode.Uri | undefined> {
     if (!providedResource) {
       return undefined;
     }
@@ -191,6 +203,21 @@ class LifecycledChatSessionItemController extends DisposableBase {
       providedResource.scheme === `acp-${this.agentId}` &&
       providedResource.path.startsWith("/untitled-")
     ) {
+      return providedResource;
+    }
+
+    if (this.sessionManager.getActive(providedResource)) {
+      this.logger.debug(
+        `newChatSessionItemHandler: reusing active session resource ${providedResource.toString()}`,
+      );
+      return providedResource;
+    }
+
+    const diskSession = await this.sessionManager.get(providedResource);
+    if (diskSession) {
+      this.logger.debug(
+        `newChatSessionItemHandler: reusing persisted session resource ${providedResource.toString()}`,
+      );
       return providedResource;
     }
 
@@ -214,7 +241,13 @@ class LifecycledChatSessionItemController extends DisposableBase {
       }
       return item;
     });
-    const merged = [...items, ...this.inProgressItems.values()];
-    this.controller.items.replace(merged);
+    const mergedByResource = new Map<string, vscode.ChatSessionItem>();
+    for (const item of items) {
+      mergedByResource.set(item.resource.toString(), item);
+    }
+    for (const item of this.inProgressItems.values()) {
+      mergedByResource.set(item.resource.toString(), item);
+    }
+    this.controller.items.replace(Array.from(mergedByResource.values()));
   }
 }

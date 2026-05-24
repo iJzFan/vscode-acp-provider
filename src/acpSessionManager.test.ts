@@ -353,6 +353,120 @@ suite("acpSessionManager", () => {
     setSessionManagerVscodeForTesting(undefined);
   });
 
+  test("keeps distinct untitled resources as separate live sessions before commit", async () => {
+    const { createAcpSessionManager, setSessionManagerVscodeForTesting } =
+      require("./acpSessionManager") as typeof import("./acpSessionManager");
+    const { setPermittedPathsVscodeForTesting } =
+      require("./permittedPaths") as typeof import("./permittedPaths");
+    setSessionManagerVscodeForTesting(mockVscode as any);
+    setPermittedPathsVscodeForTesting(mockVscode as any);
+
+    const stopEmitter = new MockEventEmitter<void>();
+    const sessionUpdateEmitter = new MockEventEmitter<unknown>();
+    const optionsChangedEmitter = new MockEventEmitter<void>();
+    const dataChangedEmitter = new MockEventEmitter<void>();
+    let createSessionCalls = 0;
+
+    const client = {
+      onSessionUpdate: sessionUpdateEmitter.event,
+      onDidStop: stopEmitter.event,
+      onDidStart: new MockEventEmitter<void>().event,
+      onDidOptionsChanged: optionsChangedEmitter.event,
+      getCapabilities: () => ({}),
+      createSession: async () => {
+        createSessionCalls += 1;
+        return {
+          sessionId: `session-${createSessionCalls}`,
+          modes: null,
+          models: null,
+          configOptions: [],
+        };
+      },
+      getSupportedModelState: () => null,
+      getSupportedModeState: () => null,
+      loadSession: async () => {
+        throw new Error("not implemented");
+      },
+      prompt: async () => ({ stopReason: "end_turn" }),
+      cancel: async () => void 0,
+      changeMode: async () => void 0,
+      changeModel: async () => void 0,
+      setThink: async () => ({
+        success: true,
+        currentThinkEnabled: false,
+      }),
+      setSessionConfigOption: async () => void 0,
+      getConfigOptions: () => [],
+      sendQuestionAnswers: async () => void 0,
+      listNativeSessions: async () => ({ sessions: [] }),
+      readTextFile: async () => ({ content: "" }),
+      writeTextFile: async () => void 0,
+      dispose: () => void 0,
+    };
+
+    const sessionDb = {
+      onDataChanged: dataChangedEmitter.event,
+      listSessions: async () => [],
+      upsertSession: async () => void 0,
+      deleteSession: async () => void 0,
+      deleteAllSessions: async () => void 0,
+      dispose: () => void 0,
+      hasSession: async () => false,
+    };
+
+    const agent = {
+      id: "auggie",
+      label: "Auggie",
+      command: "auggie",
+      args: [],
+      enabled: true,
+      mcpServers: [],
+      manualCommands: [],
+      skillPaths: [],
+    };
+
+    const logger = {
+      debug: () => void 0,
+      info: () => void 0,
+      warn: () => void 0,
+      error: () => void 0,
+    };
+
+    const manager = createAcpSessionManager(
+      sessionDb as any,
+      agent as any,
+      {} as any,
+      logger as any,
+      () => client as any,
+    );
+
+    const firstUntitledResource = MockUri.parse(
+      "acp-auggie:/untitled-first",
+    ) as any;
+    const secondUntitledResource = MockUri.parse(
+      "acp-auggie:/untitled-second",
+    ) as any;
+
+    const firstResult = await manager.createOrGet(firstUntitledResource);
+    const secondResult = await manager.createOrGet(secondUntitledResource);
+
+    assert.equal(firstResult.session.acpSessionId, "session-1");
+    assert.equal(secondResult.session.acpSessionId, "session-2");
+    assert.equal(createSessionCalls, 2);
+    assert.equal(
+      manager.getActive(firstUntitledResource)?.acpSessionId,
+      "session-1",
+    );
+    assert.equal(
+      manager.getActive(secondUntitledResource)?.acpSessionId,
+      "session-2",
+    );
+
+    manager.dispose();
+    setPermittedPathsVscodeForTesting(undefined);
+    setSessionManagerVscodeForTesting(undefined);
+  });
+
   test("reuses an already active named session without creating another ACP session", async () => {
     const { createAcpSessionManager, setSessionManagerVscodeForTesting } =
       require("./acpSessionManager") as typeof import("./acpSessionManager");
