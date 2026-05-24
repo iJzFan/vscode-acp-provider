@@ -690,6 +690,38 @@ export function formatCurrentModeUpdateSummary(currentModeId: string): string {
   return `Mode changed: ${currentModeId}`;
 }
 
+function getNamedToolSubject(info: ToolInfo): string | undefined {
+  const normalized = info.name.trim();
+  return normalized || undefined;
+}
+
+export function getToolDisplayName(info: ToolInfo): string {
+  return getNamedToolSubject(info) ?? "Tool";
+}
+
+function getToolKindDisplayName(kind: ToolInfo["kind"]): string {
+  return kind.replace(/_/g, " ");
+}
+
+export function formatToolLifecycleProgressMessage(
+  phase: "started" | "completed" | "failed",
+  info: ToolInfo,
+): string {
+  const phaseLabel =
+    phase === "started"
+      ? "started"
+      : phase === "completed"
+        ? "completed"
+        : "failed";
+  const kindLabel = getToolKindDisplayName(info.kind);
+  const subject = getNamedToolSubject(info);
+  if (!subject) {
+    return `Tool ${phaseLabel}: ${kindLabel}`;
+  }
+
+  return `Tool ${phaseLabel}: ${subject} (${kindLabel})`;
+}
+
 export function formatToolLifecycleSummary(
   phase: "started" | "completed" | "failed",
   toolCallUpdate: ToolCall | ToolCallUpdate,
@@ -697,7 +729,7 @@ export function formatToolLifecycleSummary(
 ): string {
   return [
     `Tool ${phase}: id=${toolCallUpdate.toolCallId}`,
-    `name=${info.name || "Tool"}`,
+    `name=${getToolDisplayName(info)}`,
     `kind=${info.kind}`,
   ].join("; ");
 }

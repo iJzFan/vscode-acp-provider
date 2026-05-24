@@ -9,10 +9,12 @@ import {
   buildMcpToolInvocationData,
   buildTerminalToolInvocationData,
   formatCurrentModeUpdateSummary,
+  formatToolLifecycleProgressMessage,
   formatToolLifecycleSummary,
   formatUsageUpdateSummary,
   getSubAgentInvocationId,
   getToolCompletionMessage,
+  getToolDisplayName,
   getToolInfo,
   isTerminalToolInvocation,
   makeCommandLink,
@@ -358,7 +360,11 @@ export class AcpChatParticipant extends DisposableBase {
       const sessionId = session.acpSessionId;
       this.refreshPermissionContext(session, response, token);
 
-      const promptBlocks = this.buildPromptBlocks(request, context);
+      const promptBlocks = await this.buildPromptBlocks(
+        request,
+        context,
+        token,
+      );
       if (promptBlocks.length === 0) {
         // Informational guidance in chat
         response.markdown(
@@ -420,17 +426,16 @@ export class AcpChatParticipant extends DisposableBase {
     }
   }
 
-  private buildPromptBlocks(
+  private async buildPromptBlocks(
     request: vscode.ChatRequest,
     context: vscode.ChatContext,
-  ): ContentBlock[] {
+    token: vscode.CancellationToken,
+  ): Promise<ContentBlock[]> {
     const blocks: ContentBlock[] = [];
-    this.appendUserTurnBlocks(
+    await this.appendUserTurnBlocks(
       blocks,
-      request.prompt,
-      request.references,
-      request.toolReferences,
-      request.command,
+      request,
+      token,
     );
 
     this.appendEditedFileEventBlocks(blocks, request);
@@ -438,15 +443,12 @@ export class AcpChatParticipant extends DisposableBase {
     return blocks;
   }
 
-  private appendUserTurnBlocks(
+  private async appendUserTurnBlocks(
     blocks: ContentBlock[],
-    prompt: string | undefined,
-    references: readonly vscode.ChatPromptReference[] | undefined,
-    toolReferences:
-      | readonly vscode.ChatLanguageModelToolReference[]
-      | undefined,
-    command?: string,
-  ): void {
+    request: vscode.ChatRequest,
+    token: vscode.CancellationToken,
+  ): Promise<void> {
+    const { prompt, command, references } = request;
     const trimmedPrompt = prompt?.trim();
     const structuredCommandPrompt = buildStructuredCommandPrompt({
       prompt: trimmedPrompt,
@@ -466,7 +468,7 @@ export class AcpChatParticipant extends DisposableBase {
     }
 
     this.appendReferenceBlocks(blocks, references);
-    this.appendToolReferenceBlocks(blocks, toolReferences);
+    await this.appendToolReferenceBlocks(blocks, request, token);
   }
 
   private appendReferenceBlocks(
@@ -494,21 +496,190 @@ export class AcpChatParticipant extends DisposableBase {
     }
   }
 
-  private appendToolReferenceBlocks(
+  private async appendToolReferenceBlocks(
     blocks: ContentBlock[],
-    toolReferences:
-      | readonly vscode.ChatLanguageModelToolReference[]
-      | undefined,
-  ): void {
+    request: vscode.ChatRequest,
+    token: vscode.CancellationToken,
+  ): Promise<void> {
+    const toolReferences = request.toolReferences;
     if (!toolReferences?.length) {
       return;
     }
 
     for (const tool of toolReferences) {
+      if (token.isCancellationRequested) {
+        return;
+      }
       const range = tool.range ? ` [${tool.range[0]}, ${tool.range[1]}]` : "";
-      blocks.push(
-        this.createTextBlock(`Tool reference (${tool.name})${range}`),
+      const fallbackText = `Tool reference (${tool.name})${range}`;
+      const materialized = await this.materializeToolReference(
+        request,
+        tool,
+        token,
       );
+      blocks.push(this.createTextBlock(materialized ?? fallbackText));
+    }
+  }
+
+  private async materializeToolReference(
+    request: vscode.ChatRequest,
+    toolReference: vscode.ChatLanguageModelToolReference,
+    token: vscode.CancellationToken,
+  ): Promise<string | undefined> {
+    const tools = vscode.lm?.tools ?? [];
+    const tool = tools.find((candidate) => candidate.name === toolReference.name);
+    if (!tool || !request.model?.sendRequest) {
+      return undefined;
+    }
+
+    try {
+      const toolCall = await this.createToolCallFromReference(
+        request,
+        tool,
+        token,
+      );
+      if (!toolCall || token.isCancellationRequested) {
+        return undefined;
+      }
+
+      const result = await vscode.lm.invokeTool(
+        tool.name,
+        {
+          toolInvocationToken: request.toolInvocationToken,
+          input: toolCall.input,
+        },
+        token,
+      );
+      if (token.isCancellationRequested) {
+        return undefined;
+      }
+
+      const resultText = this.formatLanguageModelToolResult(result);
+      return [
+        `Resolved tool attachment (${tool.name})`,
+        `Input: ${this.formatJsonLike(toolCall.input)}`,
+        resultText ? `Result:\n${resultText}` : "Result: (no text content)",
+      ].join("\n\n");
+    } catch (error) {
+      this.logger.warn(
+        `[acp:${this.agentId}] Failed to resolve tool attachment ${toolReference.name}: ${extractReadableErrorMessage(error)}`,
+      );
+      return undefined;
+    }
+  }
+
+  private async createToolCallFromReference(
+    request: vscode.ChatRequest,
+    tool: vscode.LanguageModelToolInformation,
+    token: vscode.CancellationToken,
+  ): Promise<{ input: object } | undefined> {
+    const response = await request.model.sendRequest(
+      [
+        vscode.LanguageModelChatMessage.User(
+          [
+            `The user attached the \`${tool.name}\` tool to an ACP-backed chat request.`,
+            "Generate the tool input by calling that tool. Do not answer the user directly.",
+            `User request: ${request.prompt.trim() || "(empty prompt)"}`,
+          ].join("\n\n"),
+        ),
+      ],
+      {
+        justification:
+          "Resolve an attached chat tool before forwarding the request to the ACP agent.",
+        tools: [
+          {
+            name: tool.name,
+            description: tool.description,
+            inputSchema: tool.inputSchema,
+          },
+        ],
+        toolMode: vscode.LanguageModelChatToolMode.Required,
+      },
+      token,
+    );
+
+    for await (const chunk of response.stream) {
+      if (token.isCancellationRequested) {
+        return undefined;
+      }
+      if (this.isLanguageModelToolCallPart(chunk, tool.name)) {
+        return {
+          input: this.ensureObjectInput(chunk.input),
+        };
+      }
+    }
+
+    return undefined;
+  }
+
+  private isLanguageModelToolCallPart(
+    value: unknown,
+    expectedName: string,
+  ): value is { name: string; input: unknown } {
+    return (
+      typeof value === "object" &&
+      value !== null &&
+      "name" in value &&
+      "input" in value &&
+      (value as { name?: unknown }).name === expectedName
+    );
+  }
+
+  private ensureObjectInput(value: unknown): object {
+    if (typeof value === "object" && value !== null && !Array.isArray(value)) {
+      return value;
+    }
+    return {};
+  }
+
+  private formatLanguageModelToolResult(
+    result: vscode.LanguageModelToolResult,
+  ): string {
+    return result.content
+      .map((part) => this.formatLanguageModelToolResultPart(part))
+      .filter((text): text is string => Boolean(text?.trim()))
+      .join("\n\n");
+  }
+
+  private formatLanguageModelToolResultPart(part: unknown): string | undefined {
+    if (typeof part === "string") {
+      return part;
+    }
+    if (part === undefined || part === null) {
+      return undefined;
+    }
+    if (typeof part !== "object") {
+      return String(part);
+    }
+
+    const value = (part as { value?: unknown }).value;
+    if (typeof value === "string") {
+      return value;
+    }
+    if (value !== undefined) {
+      return this.formatJsonLike(value);
+    }
+
+    const dataPart = part as { data?: unknown; mimeType?: unknown };
+    if (dataPart.data instanceof Uint8Array) {
+      const mimeType =
+        typeof dataPart.mimeType === "string"
+          ? dataPart.mimeType
+          : "application/octet-stream";
+      if (/^(text\/|application\/(json|xml))/.test(mimeType)) {
+        return new TextDecoder().decode(dataPart.data);
+      }
+      return `[${mimeType} data, ${dataPart.data.byteLength} bytes]`;
+    }
+
+    return this.formatJsonLike(part);
+  }
+
+  private formatJsonLike(value: unknown): string {
+    try {
+      return JSON.stringify(value, undefined, 2);
+    } catch {
+      return String(value);
     }
   }
 
@@ -664,10 +835,10 @@ export class AcpChatParticipant extends DisposableBase {
                   : {}),
               }
             : undefined;
-        response.progress(formatToolLifecycleSummary("started", update, info));
+        response.progress(formatToolLifecycleProgressMessage("started", info));
         response.beginToolInvocation(
           update.toolCallId,
-          info.name || "Tool",
+          getToolDisplayName(info),
           streamData,
         );
         this.logToolCallLifecycle("started", update, info);
@@ -739,7 +910,7 @@ export class AcpChatParticipant extends DisposableBase {
 
         this.questionToolCalls.delete(update.toolCallId);
 
-        const toolName = info.name || tracked?.name || "Tool";
+        const toolName = info.name.trim() || tracked?.name?.trim() || "Tool";
         const part = new vscode.ChatToolInvocationPart(
           toolName,
           update.toolCallId,
@@ -781,9 +952,8 @@ export class AcpChatParticipant extends DisposableBase {
         part.toolSpecificData =
           terminalData ?? buildMcpToolInvocationData(update, info);
         response.progress(
-          formatToolLifecycleSummary(
+          formatToolLifecycleProgressMessage(
             update.status === "failed" ? "failed" : "completed",
-            update,
             info,
           ),
         );

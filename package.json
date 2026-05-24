@@ -2,7 +2,7 @@
   "name": "vscode-acp-client",
   "displayName": "VS Code ACP Client",
   "description": "Chat sessions backed by Agent Client Protocol (ACP) agents and CLIs",
-  "version": "0.6.4",
+  "version": "0.7.2",
   "publisher": "org-gap",
   "repository": {
     "type": "git",
@@ -63,7 +63,8 @@
         "order": 10,
         "when": "config.acpClient.agents.opencode.enabled",
         "capabilities": {
-          "supportsFileAttachments": true
+          "supportsFileAttachments": true,
+          "supportsToolAttachments": true
         }
       },
       {
@@ -85,7 +86,8 @@
         "order": 20,
         "when": "config.acpClient.agents.codex.enabled",
         "capabilities": {
-          "supportsFileAttachments": true
+          "supportsFileAttachments": true,
+          "supportsToolAttachments": true
         }
       },
       {
@@ -107,7 +109,8 @@
         "order": 30,
         "when": "config.acpClient.agents.cagent.enabled",
         "capabilities": {
-          "supportsFileAttachments": true
+          "supportsFileAttachments": true,
+          "supportsToolAttachments": true
         }
       },
       {
@@ -129,7 +132,8 @@
         "order": 40,
         "when": "config.acpClient.agents.geminicli.enabled",
         "capabilities": {
-          "supportsFileAttachments": true
+          "supportsFileAttachments": true,
+          "supportsToolAttachments": true
         }
       },
       {
@@ -151,7 +155,8 @@
         "order": 50,
         "when": "config.acpClient.agents.claude.enabled",
         "capabilities": {
-          "supportsFileAttachments": true
+          "supportsFileAttachments": true,
+          "supportsToolAttachments": true
         }
       },
       {
@@ -173,7 +178,8 @@
         "order": 60,
         "when": "config.acpClient.agents.auggie.enabled",
         "capabilities": {
-          "supportsFileAttachments": true
+          "supportsFileAttachments": true,
+          "supportsToolAttachments": true
         }
       },
       {
@@ -195,7 +201,8 @@
         "order": 70,
         "when": "config.acpClient.agents.vibe.enabled",
         "capabilities": {
-          "supportsFileAttachments": true
+          "supportsFileAttachments": true,
+          "supportsToolAttachments": true
         }
       },
       {
@@ -217,7 +224,8 @@
         "order": 80,
         "when": "config.acpClient.agents.copilot.enabled",
         "capabilities": {
-          "supportsFileAttachments": true
+          "supportsFileAttachments": true,
+          "supportsToolAttachments": true
         }
       }
     ],

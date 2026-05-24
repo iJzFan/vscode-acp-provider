@@ -231,7 +231,7 @@ suite("turnBuilder", () => {
     );
   });
 
-  test("replays tool lifecycle summaries around tool invocations", () => {
+  test("replays tool lifecycle progress with tool name and kind", () => {
     const builder = new turnBuilderModule.TurnBuilder("acp", {
       debug: () => undefined,
     } as never);
@@ -263,9 +263,9 @@ suite("turnBuilder", () => {
     const invocation = response.parts[1] as MockChatToolInvocationPart;
     const end = response.parts[2] as MockChatResponseProgressPart;
 
-    assert.match(start.value, /^Tool started: id=call-1;/);
+    assert.equal(start.value, "Tool started: planner (other)");
     assert.equal(invocation.toolCallId, "call-1");
-    assert.match(end.value, /^Tool completed: id=call-1;/);
+    assert.equal(end.value, "Tool completed: planner (other)");
   });
 
   test("replays execute-command tool calls with the original command line and terminal metadata", () => {

@@ -1,3 +1,21 @@
+## [0.7.2] - 2026-05-25
+
+- Fixed ACP tool lifecycle chat text to render both the tool name and tool kind in normal user-facing copy (for example `Tool started: planner (other)`) instead of either dumping raw debug fields or omitting those details.
+- Kept detailed lifecycle summaries in the ACP output channel while restoring user-visible name/kind coverage across both live tool rendering and replayed chat history.
+- Updated shared formatter and replay regression coverage for the restored tool name/kind chat text.
+
+## [0.7.1] - 2026-05-25
+
+- Fixed ACP tool lifecycle chat text so live tool calls and replayed history no longer surface raw diagnostic fields like `name=...` and `kind=...` in user-facing progress lines.
+- Split tool lifecycle formatting into chat-friendly progress copy and detailed ACP log summaries, preserving rich diagnostics in the output channel without leaking them into the conversation UI.
+- Added regression coverage for the shared lifecycle formatter and replayed tool-call progress wording.
+
+## [0.7.0] - 2026-05-25
+
+- Added real VS Code chat tool attachment support for ACP sessions: attached tools now use the selected chat model to generate tool input, call `vscode.lm.invokeTool`, and forward the resolved tool output to the ACP agent as prompt context.
+- Added safe fallback behavior so unresolved tool attachments still degrade to the existing textual `Tool reference (...)` prompt block instead of failing the ACP request.
+- Enabled `supportsToolAttachments` for ACP chat session contributions now that the runtime can materialize attached tool results, with regression coverage for both success and fallback paths.
+
 ## [0.6.4] - 2026-05-25
 
 - Added Copilot-style welcome titles, welcome messages, input placeholders, and stable ordering to the ACP chat session contributions so each configured agent has clearer session-picker and new-chat guidance.

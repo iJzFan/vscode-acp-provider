@@ -11,10 +11,11 @@ import {
   buildQuestionCarouselPart,
   buildTerminalToolInvocationData,
   formatCurrentModeUpdateSummary,
-  formatToolLifecycleSummary,
+  formatToolLifecycleProgressMessage,
   formatUsageUpdateSummary,
   getSubAgentInvocationId,
   getToolCompletionMessage,
+  getToolDisplayName,
   getToolInfo,
   isTerminalToolInvocation,
   resolveUri,
@@ -211,14 +212,14 @@ export class TurnBuilder {
     const info = getToolInfo(update);
     this.currentAgentParts.push(
       new vscode.ChatResponseProgressPart(
-        formatToolLifecycleSummary("started", update, info),
+        formatToolLifecycleProgressMessage("started", info),
       ),
     );
     const invocation = new vscode.ChatToolInvocationPart(
-      info.name || "Tool",
+      getToolDisplayName(info),
       update.toolCallId,
     );
-    invocation.originMessage = info.name || "Tool";
+    invocation.originMessage = getToolDisplayName(info);
     if (info.input) {
       invocation.invocationMessage = info.input;
     }
@@ -284,9 +285,8 @@ export class TurnBuilder {
       terminalData ?? buildMcpToolInvocationData(update, info);
     this.currentAgentParts.push(
       new vscode.ChatResponseProgressPart(
-        formatToolLifecycleSummary(
+        formatToolLifecycleProgressMessage(
           update.status === "failed" ? "failed" : "completed",
-          update,
           info,
         ),
       ),

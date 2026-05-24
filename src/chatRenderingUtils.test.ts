@@ -212,6 +212,50 @@ suite("chatRenderingUtils", () => {
     assert.equal(info.name, "npm run compile");
   });
 
+  test("formatToolLifecycleProgressMessage renders tool name and kind in chat-friendly text", () => {
+    const info = {
+      toolCallId: "tool-progress-1",
+      name: "planner",
+      kind: "other",
+    };
+
+    const started = chatRenderingUtils.formatToolLifecycleProgressMessage(
+      "started",
+      info as never,
+    );
+    const completed = chatRenderingUtils.formatToolLifecycleProgressMessage(
+      "completed",
+      info as never,
+    );
+    const failed = chatRenderingUtils.formatToolLifecycleProgressMessage(
+      "failed",
+      info as never,
+    );
+
+    assert.equal(started, "Tool started: planner (other)");
+    assert.equal(completed, "Tool completed: planner (other)");
+    assert.equal(failed, "Tool failed: planner (other)");
+    assert.doesNotMatch(`${started} ${completed} ${failed}`, /id=|name=|kind=/);
+  });
+
+  test("formatToolLifecycleSummary keeps detailed identifiers for ACP logs", () => {
+    const summary = chatRenderingUtils.formatToolLifecycleSummary(
+      "started",
+      {
+        toolCallId: "tool-progress-2",
+      } as never,
+      {
+        toolCallId: "tool-progress-2",
+        name: "planner",
+        kind: "other",
+      } as never,
+    );
+
+    assert.match(summary, /^Tool started: id=tool-progress-2;/);
+    assert.match(summary, /name=planner/);
+    assert.match(summary, /kind=other/);
+  });
+
   test("getToolInfo formats ACP tagged file review payloads into readable text", () => {
     const info = chatRenderingUtils.getToolInfo({
       toolCallId: "tool-6",
