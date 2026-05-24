@@ -14,9 +14,11 @@ import {
   formatToolLifecycleSummary,
   formatUsageUpdateSummary,
   getSubAgentInvocationId,
+  getToolCompletionMessage,
   getToolInfo,
   isTerminalToolInvocation,
   resolveUri,
+  type ToolInfo,
 } from "./chatRenderingUtils";
 import {
   buildToolDiffJumpCommands,
@@ -44,11 +46,15 @@ export class TurnBuilder {
     string,
     {
       part: vscode.ChatToolInvocationPart;
+      kind?: ToolInfo["kind"];
       invocationMessage?: string;
     }
   >();
   private readonly questionToolCalls = new Set<string>();
-  private readonly cumulativeDiffArtifacts = new Map<string, import("./diffRendering").ToolDiffArtifact>();
+  private readonly cumulativeDiffArtifacts = new Map<
+    string,
+    import("./diffRendering").ToolDiffArtifact
+  >();
   private lastModeId: string | undefined;
 
   constructor(
@@ -99,26 +105,45 @@ export class TurnBuilder {
         this.appendPlanEntries(update.entries);
         break;
       }
-      case "available_commands_update":
-      case "config_option_update":
-      case "session_info_update":
-        break;
       case "current_mode_update": {
         this.flushPendingUserMessage();
         this.flushAgentMessageChunksToMarkdown();
-        this.appendCurrentModeUpdate(update as { currentModeId?: unknown });
+        if (
+          typeof update.currentModeId === "string" &&
+          update.currentModeId !== this.lastModeId
+        ) {
+          this.currentAgentParts.push(
+            new vscode.ChatResponseProgressPart(
+              formatCurrentModeUpdateSummary(update.currentModeId),
+            ),
+          );
+          this.lastModeId = update.currentModeId;
+        }
         break;
       }
       case "usage_update": {
         this.flushPendingUserMessage();
         this.flushAgentMessageChunksToMarkdown();
-        this.appendUsageUpdate(update as {
-          used?: unknown;
-          size?: unknown;
-          cost?: unknown;
-        });
+        if (
+          typeof update.used === "number" &&
+          typeof update.size === "number"
+        ) {
+          this.currentAgentParts.push(
+            new vscode.ChatResponseProgressPart(
+              formatUsageUpdateSummary({
+                used: update.used,
+                size: update.size,
+                cost: update.cost ?? undefined,
+              }),
+            ),
+          );
+        }
         break;
       }
+      case "available_commands_update":
+      case "config_option_update":
+      case "session_info_update":
+        break;
     }
   }
 
@@ -126,7 +151,9 @@ export class TurnBuilder {
     this.flushPendingUserMessage();
     this.flushPendingAgentMessage();
     if (this.cumulativeDiffArtifacts.size > 0) {
-      const cumulativeArtifacts = Array.from(this.cumulativeDiffArtifacts.values());
+      const cumulativeArtifacts = Array.from(
+        this.cumulativeDiffArtifacts.values(),
+      );
       const cumulativePart = createToolDiffPart(cumulativeArtifacts, {
         includeGoToFileUri: false,
       });
@@ -154,7 +181,6 @@ export class TurnBuilder {
     this.toolCallParts.clear();
     this.questionToolCalls.clear();
     this.cumulativeDiffArtifacts.clear();
-    this.lastModeId = undefined;
   }
 
   private captureUserMessageChunk(content: ContentBlock): void {
@@ -199,6 +225,7 @@ export class TurnBuilder {
     }
     this.toolCallParts.set(update.toolCallId, {
       part: invocation,
+      kind: info.kind,
       invocationMessage: info.input,
     });
     this.currentAgentParts.push(invocation);
@@ -234,20 +261,24 @@ export class TurnBuilder {
     if (invocationMessage) {
       part.invocationMessage = invocationMessage;
     }
-    if (info.output) {
-      part.pastTenseMessage = info.output;
-    }
-    if (update.status === "completed") {
-      part.presentation = "hiddenAfterComplete";
+    const completionMessage = getToolCompletionMessage(
+      update,
+      info,
+      tracked.kind,
+      tracked.invocationMessage,
+    );
+    if (completionMessage) {
+      part.pastTenseMessage = completionMessage;
     }
     const subAgentInvocationId = getSubAgentInvocationId(update);
     if (subAgentInvocationId) {
       part.subAgentInvocationId = subAgentInvocationId;
     }
-    const terminalData = isTerminalToolInvocation(update, info)
-      ? buildTerminalToolInvocationData(update, info)
+    const terminalData = isTerminalToolInvocation(update, info, tracked.kind)
+      ? buildTerminalToolInvocationData(update, info, tracked.invocationMessage)
       : undefined;
-    part.toolSpecificData = terminalData ?? buildMcpToolInvocationData(info);
+    part.toolSpecificData =
+      terminalData ?? buildMcpToolInvocationData(update, info);
     this.currentAgentParts.push(
       new vscode.ChatResponseProgressPart(
         formatToolLifecycleSummary(
@@ -259,23 +290,27 @@ export class TurnBuilder {
     );
     this.toolCallParts.delete(update.toolCallId);
 
-    if (!update.content?.length) {
-      return;
-    }
-
-    const mergedArtifacts = new Map<string, import("./diffRendering").ToolDiffArtifact>();
+    const artifactsByKey = new Map<
+      string,
+      import("./diffRendering").ToolDiffArtifact
+    >();
     for (const artifact of [
       ...collectToolDiffArtifacts(update, currentWorkspaceRoot()),
       ...collectToolMetadataDiffArtifacts(update, currentWorkspaceRoot()),
     ]) {
       const key = getToolDiffArtifactKey(artifact.fileUri);
-      const existing = mergedArtifacts.get(key);
-      mergedArtifacts.set(
+      const existing = artifactsByKey.get(key);
+      artifactsByKey.set(
         key,
         existing ? mergeToolDiffArtifacts(existing, artifact) : artifact,
       );
     }
-    const artifacts = Array.from(mergedArtifacts.values());
+
+    const artifacts = Array.from(artifactsByKey.values());
+    if (!artifacts.length) {
+      return;
+    }
+
     for (const artifact of artifacts) {
       const key = getToolDiffArtifactKey(artifact.fileUri);
       const existing = this.cumulativeDiffArtifacts.get(key);
@@ -304,51 +339,6 @@ export class TurnBuilder {
       markdown.appendMarkdown("-  [" + checkbox + "] " + entry.content + "\n");
     }
     this.currentAgentParts.push(new vscode.ChatResponseMarkdownPart(markdown));
-  }
-
-  private appendCurrentModeUpdate(update: { currentModeId?: unknown }): void {
-    if (typeof update.currentModeId !== "string") {
-      return;
-    }
-    if (this.lastModeId === update.currentModeId) {
-      return;
-    }
-    this.lastModeId = update.currentModeId;
-    this.currentAgentParts.push(
-      new vscode.ChatResponseProgressPart(
-        formatCurrentModeUpdateSummary(update.currentModeId),
-      ),
-    );
-  }
-
-  private appendUsageUpdate(update: {
-    used?: unknown;
-    size?: unknown;
-    cost?: unknown;
-  }): void {
-    if (typeof update.used !== "number" || typeof update.size !== "number") {
-      return;
-    }
-
-    const cost =
-      update.cost && typeof update.cost === "object" &&
-        typeof Reflect.get(update.cost, "amount") === "number" &&
-        typeof Reflect.get(update.cost, "currency") === "string"
-        ? {
-            amount: Reflect.get(update.cost, "amount") as number,
-            currency: Reflect.get(update.cost, "currency") as string,
-          }
-        : undefined;
-
-    this.currentAgentParts.push(
-      new vscode.ChatResponseProgressPart(
-        formatUsageUpdateSummary({
-          used: update.used,
-          size: update.size,
-          cost,
-        }),
-      ),
-    );
   }
 
   private flushPendingUserMessage(): void {
@@ -398,7 +388,9 @@ export class TurnBuilder {
     this.currentAgentMetadata = {};
   }
 
-  private getContentText(content: ContentBlock | undefined): string | undefined {
+  private getContentText(
+    content: ContentBlock | undefined,
+  ): string | undefined {
     if (!content) {
       return undefined;
     }
@@ -407,6 +399,16 @@ export class TurnBuilder {
     }
     return undefined;
   }
+
+  private decodeXmlEntities(value: string): string {
+    return value
+      .replace(/&lt;/g, "<")
+      .replace(/&gt;/g, ">")
+      .replace(/&amp;/g, "&")
+      .replace(/&quot;/g, '"')
+      .replace(/&apos;/g, "'");
+  }
+
   private parseUserChunk(raw: string): ParsedUserMessage {
     const xmlOutput = this.parseXmlLineUserChunk(raw);
     if (xmlOutput.userMessages || xmlOutput.references.length) {
@@ -418,7 +420,9 @@ export class TurnBuilder {
       this.logger.debug("User message chunk parsed using Colon format");
       return colonOutput;
     }
-    this.logger.debug("User message chunk could not be parsed, returning raw value");
+    this.logger.debug(
+      "User message chunk could not be parsed, returning raw value",
+    );
     return { userMessages: raw, references: [] };
   }
 
@@ -428,16 +432,13 @@ export class TurnBuilder {
     let userMessages = raw;
 
     const extractTagValue = (tagName: string): string | undefined => {
-      const pattern = new RegExp("<" + tagName + ">([\\s\\S]*?)<\\/" + tagName + ">", "i");
+      const pattern = new RegExp(
+        "<" + tagName + ">([\\s\\S]*?)<\\/" + tagName + ">",
+        "i",
+      );
       const match = raw.match(pattern);
       return match?.[1]?.trim();
     };
-
-    const decodeXmlEntities = (value: string): string =>
-      value
-        .replace(/&lt;/g, "<")
-        .replace(/&gt;/g, ">")
-        .replace(/&amp;/g, "&");
 
     const commandMessage = extractTagValue("command-message");
     const commandName = extractTagValue("command-name");
@@ -447,14 +448,17 @@ export class TurnBuilder {
 
     let slashCommand = "";
     if (commandMessage) {
-      slashCommand = "/" + normalizeCommandName(decodeXmlEntities(commandMessage.trim()));
+      slashCommand =
+        "/" +
+        normalizeCommandName(this.decodeXmlEntities(commandMessage.trim()));
     } else if (commandName) {
-      slashCommand = "/" + normalizeCommandName(decodeXmlEntities(commandName));
+      slashCommand =
+        "/" + normalizeCommandName(this.decodeXmlEntities(commandName));
     }
     if (slashCommand && commandArgs) {
-      slashCommand = slashCommand + " " + decodeXmlEntities(commandArgs);
+      slashCommand = slashCommand + " " + this.decodeXmlEntities(commandArgs);
     } else if (!slashCommand && commandArgs) {
-      slashCommand = " " + decodeXmlEntities(commandArgs);
+      slashCommand = " " + this.decodeXmlEntities(commandArgs);
     }
 
     userMessages = userMessages
@@ -471,13 +475,18 @@ export class TurnBuilder {
     });
 
     const markdownRefPattern = /\[@([^\]]+)\]\(([^)]+)\)/g;
-    userMessages = userMessages.replace(markdownRefPattern, (_match, name, ref) => {
-      const uri = resolveUri(ref, workspaceRoot);
-      references.push({ id: name, name, value: uri });
-      return "";
-    });
+    userMessages = userMessages.replace(
+      markdownRefPattern,
+      (_match, name, ref) => {
+        const uri = resolveUri(ref, workspaceRoot);
+        references.push({ id: name, name, value: uri });
+        return "";
+      },
+    );
 
-    const cleanedMessage = userMessages.replace(/^User:\s*/i, "").trim();
+    const cleanedMessage = this.decodeXmlEntities(
+      userMessages.replace(/^User:\s*/i, "").trim(),
+    );
     const finalMessage = slashCommand
       ? cleanedMessage
         ? slashCommand + "\n" + cleanedMessage
@@ -505,7 +514,9 @@ export class TurnBuilder {
         const fileRelative = match[2];
         return {
           userMessages: "",
-          references: [{ id: fileRelative, name: fileRelative, value: fileUri }],
+          references: [
+            { id: fileRelative, name: fileRelative, value: fileUri },
+          ],
         };
       }
     }

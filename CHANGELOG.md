@@ -1,8 +1,40 @@
-## [0.5.3] - 2026-05-21
+## [0.5.10] - 2026-05-22
+
+- Fixed Auggie ACP execute-tool rendering for real wrapped PowerShell results by unwrapping `<return-code>` / `<output>` envelopes, parsing exit codes, and stripping trailing CLIXML progress blobs before they reach the chat UI.
+- Cleaned markdown-like terminal output captured from real `auggie --acp` sessions so Jekyll `{% code %}` blocks and HTML `<figure>` tags become readable text instead of leaking raw wrapper markup.
+- Added regression coverage for real Auggie ACP payloads in both `chatRenderingUtils` and `turnBuilder`, alongside a live Auggie ACP probe validation kept within the requested test budget.
+
+## [0.5.9] - 2026-05-22
+
+- Fixed OpenCode ACP tool rendering to use concise completion summaries instead of dumping full tool output into `pastTenseMessage`, which stopped raw file contents and terminal output from leaking into the tool headline UI.
+- Fixed OpenCode execute-tool command extraction for string-shaped `rawInput.command` payloads, restoring proper command-line rendering and terminal metadata for real `opencode acp` sessions.
+- Added markdown-aware MCP tool output rendering that prefers `metadata.preview` with `text/markdown` for markdown/file-read tools, including cleanup of Jekyll-style `{% code %}` blocks and HTML `<figure>` tags into readable markdown.
+- Sanitized ANSI-style terminal output before rendering tool result text and added regression coverage using payloads captured from a real `opencode acp` probe.
+
+## [0.5.8] - 2026-05-22
+
+- Reduced VSIX size by whitelisting only runtime extension assets (`out/**`, production `node_modules/**`, manifest, and marketplace docs) during packaging.
+- Excluded repository-only artifacts from packaging, including CodeGraph indexes, logs, diff/investigation materials, prior VSIX files, and compiled test outputs.
+
+## [0.5.7] - 2026-05-22
+
+- Fixed ACP tool-result rendering for XML-like file review payloads so tool calls no longer leak raw `<path>`, `<type>`, `<entries>`, and `<content>` tags into the chat UI.
+- Reformatted tagged file-review content into readable path/type/content sections in the shared tool-output formatter, which fixes both live tool updates and replayed session history.
+- Added regression coverage for tagged tool-output formatting in both `chatRenderingUtils` and `turnBuilder`.
+
+## [0.5.6] - 2026-05-22
+
+- Fixed changed-file added/removed counts and inline diff headers for empty-file creations and deletions by treating empty content as zero diff lines.
+- Restored structured tool invocation rendering data and summaries so live/replayed ACP tool calls keep their command details instead of collapsing to a single flat line.
+- Added regression coverage for empty-content diff stats, empty-file inline diff headers, and completed execute-command replay rendering.
+
+## [0.5.5] - 2026-05-21
 
 - Fixed untitled ACP session cache cleanup so starting a new chat from the session list no longer reuses the previously completed untitled session.
 - Fixed first-request session-item initialization so session-list launches bind to the real ACP session URI immediately instead of leaving new chats on colliding untitled resources.
 - Reused already-active named sessions in the session manager so promoted live sessions do not spawn duplicate ACP sessions when VS Code requests their content.
+- Ignored stale named `sessionResource` values during `newChatSessionItemHandler`, forcing New Chat/session-list launches onto a fresh untitled ACP session instead of reopening the previously selected named session.
+- Fixed execute-command / tool-call rendering so initial tool calls without an explicit status still preserve their command line, terminal kind, and completion metadata in both live chat updates and replayed session history.
 - Added a regression test covering back-to-list then new-untitled-session creation.
 
 ## [0.5.1] - 2026-05-20
@@ -73,6 +105,7 @@
 
 - Fixed live ACP file-diff rendering so completed tool updates now push the `File edits` diff part during the active chat stream instead of only showing diffs when session history is rebuilt.
 - Kept diff rendering active after `externalEdit()` tool flows finish so file-edit tools that also report diff content no longer suppress the visible diff widget.
+
 ## [0.4.11] - 2026-05-19
 
 - Fixed live ACP file-diff rendering so completed tool updates now push the `File edits` diff part during the active chat stream instead of only showing diffs when session history is rebuilt.

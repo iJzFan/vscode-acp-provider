@@ -12,10 +12,19 @@ const moduleWithLoad = Module as typeof Module & {
 const originalLoad = moduleWithLoad._load;
 
 class MockUri {
-  constructor(private readonly value: string) {}
+  readonly scheme: string;
+  readonly path: string;
+
+  constructor(private readonly value: string) {
+    const separatorIndex = value.indexOf(":");
+    this.scheme = separatorIndex >= 0 ? value.slice(0, separatorIndex) : "file";
+    this.path = separatorIndex >= 0 ? value.slice(separatorIndex + 1) : value;
+  }
+
   toString(): string {
     return this.value;
   }
+
   static parse(value: string): MockUri {
     return new MockUri(value);
   }
@@ -351,6 +360,68 @@ suite("acpLifecycledChatSessionItemController", () => {
     assert.equal(createOrGetCalls, 1);
     assert.equal(newItem.resource.toString(), "acp-agent:/fresh-1");
     assert.equal(newItem.label, "fresh-1");
+
+    setChatSessionItemControllerVscodeForTesting(undefined);
+    disposable.dispose();
+  });
+
+  test("ignores a stale named session resource and starts a fresh untitled session", async () => {
+    const {
+      createAcpChatSessionItemController,
+      setChatSessionItemControllerVscodeForTesting,
+    } = require("./acpLifecycledChatSessionItemController") as typeof import("./acpLifecycledChatSessionItemController");
+    setChatSessionItemControllerVscodeForTesting(mockVscode as any);
+
+    const sessionChangeEmitter = new MockEventEmitter<{ modified: unknown }>();
+    const createdSession = {
+      acpSessionId: "fresh-2",
+      title: "fresh-2",
+      status: 2,
+      vscodeResource: MockUri.parse("acp-agent:/untitled-req-fresh"),
+      agent: { id: "agent" },
+      cwd: "g:/workspace",
+      updatedAt: Date.now(),
+    };
+    let seenResource = "";
+
+    const sessionManager = {
+      onDidChangeSession: sessionChangeEmitter.event,
+      createOrGet: async (resource: MockUri) => {
+        seenResource = resource.toString();
+        return { session: createdSession };
+      },
+      getActive: () => undefined,
+      createSessionUri: (session: { acpSessionId: string }) =>
+        MockUri.parse(`acp-agent:/${session.acpSessionId}`),
+      list: async () => [],
+      getSessionChangedFiles: () => [],
+    };
+    const sessionDb = {
+      upsertSession: async () => void 0,
+    };
+    const logger = {
+      debug: () => void 0,
+      error: () => void 0,
+    };
+
+    const disposable = createAcpChatSessionItemController(
+      "acp-agent",
+      "agent",
+      sessionManager as any,
+      sessionDb as any,
+      logger as any,
+    );
+
+    const newItem = await createdController!.newChatSessionItemHandler!({
+      request: {
+        id: "req-fresh",
+        sessionResource: MockUri.parse("acp-agent:/old-session-1"),
+        prompt: "Start fresh",
+      },
+    });
+
+    assert.equal(seenResource, "acp-agent:/untitled-req-fresh");
+    assert.equal(newItem.resource.toString(), "acp-agent:/fresh-2");
 
     setChatSessionItemControllerVscodeForTesting(undefined);
     disposable.dispose();

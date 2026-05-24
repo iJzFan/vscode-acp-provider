@@ -15,18 +15,123 @@ Native chat session provider for VS Code that connects external agent CLIs throu
 
 ## Features
 
-- Adds support for ACP agents in VS Code as external agents
-- Surfaces ACP `availableCommands` as `/`-triggered chat command completions after the agent reports them, while keeping `/?` as an explicit command list and matching namespaced commands by either full name or short alias
-- Logs ACP tool lifecycle summaries to the output channel and renders touched-file summaries in chat when tool calls report file locations or diffs
-- Imports MCP servers from the active VS Code profile, workspace `.vscode/mcp.json`, and compatible agent plugins
-- Adds plan follow-up actions in chat so users can continue, request changes, or ask for more detail without leaving the session
-- Adds local risk hints for permission prompts and context-window usage warnings for long ACP sessions
-- Supports
-  - [OpenCode](https://opencode.ai)
-  - [cagent](https://docs.docker.com/ai/cagent/)
-  - [Codex CLI](https://github.com/openai/codex) through [https://github.com/zed-industries/codex-acp](https://github.com/zed-industries/codex-acp)
-  - [Gemini CLI](https://geminicli.com)
-  - [Auggie CLI](https://docs.augmentcode.com/cli/overview) via `auggie --acp`
+### Agent Integration
+- **8 built-in ACP agent slots**: OpenCode, Codex, Cagent, Gemini CLI, Claude Code, Auggie, Mistral Vibe, Copilot — each independently enabled via `acpClient.agents.<id>.enabled`
+- **Custom agent configuration**: configure command, args, cwd, env, and MCP servers per agent via VS Code settings
+- **Agent registry with hot-reload**: reads from `acpClient.agents` config and watches for changes with no restart required
+
+### Chat Session Management
+- **Native chat session provider** using `vscode.chat.registerChatSessionContentProvider` proposed API — ACP agents appear in VS Code's session picker alongside built-in providers
+- **Session persistence via SQLite** (`acp-sessions.db`) — sessions survive VS Code restarts, history is replayed on reload
+- **Session list in sidebar** — view and switch between ACP sessions from the chat panel sidebar
+- **Untitled (new) and saved session support** — sessions are lazily created and tracked both in-memory and on-disk
+- **Session history replay on load** — TurnBuilder reconstructs ChatRequestTurn/ChatResponseTurn from ACP SessionNotification arrays
+- **Session syncer** — imports native ACP sessions from agents that support session listing
+
+### ACP Protocol Communication
+- **Full ACP client implementation** — spawns agent subprocess, connects via ndjson streams, handles ACP handshake and capability negotiation
+- **Lazy process boot** — no agent subprocess spawned until the first `createSession()` or `loadSession()` call
+- **Session mode and model selection** — VS Code picker UI mapped to ACP `setSessionMode` / `unstable_setSessionModel` calls
+- **Thinking effort control** — `off`, `think`, `megathink`, `ultrathink` via `session/set_think` ACP extension method, with graceful fallback for unsupported agents
+- **Agent-driven mode updates** — handles `current_mode_update` notifications from the agent, UI updates in real time
+- **Capability negotiation logging** — agent capabilities and disabled features are logged on startup for easy debugging
+
+### Prompt & Response Handling
+- **Slash command completions** — `/?` lists commands, `/` triggers completion for ACP-advertised and manually configured commands
+- **Namespaced command matching** — matches both canonical names (e.g. `oma--oh-my-auggie:oma-plan`) and short aliases (`oma-plan`)
+- **Structured command serialization** — XML-tagged `<command-message>` blocks for clean agent consumption
+- **User references & tool references** — passed through to the ACP agent as context
+- **Edited file events** — tracked and sent to agent as relevant context
+
+### Tool Call Handling & Rendering
+- **Real-time tool call streaming** — tool start/progress/completion/failure rendered in chat UI via `ChatToolInvocationPart`
+- **Terminal & MCP tool invocation data** — command line info for executed tools, MCP tool metadata
+- **Tool lifecycle summaries** — logged to the ACP output channel for debugging
+- **Tool invocation input queuing** — FIFO queue for sequential prompt processing per session
+- **Sub-agent invocation tracking** — handles planner/agent delegation patterns
+
+### Permission & Confirmation System
+- **In-chat permission prompts** — uses `vscode.lm.invokeTool` with `VscodeGetConfirmation` for inline agent approval
+- **Risk assessment for tool calls** — classifies commands as low/medium/high risk based on patterns and context
+- **Modal fallback** — when no `toolInvocationToken` is available, falls back to VS Code modal dialogs
+- **Switch-mode permission prompts** — displays plan summary and question carousel for multi-option selection
+- **Command-based permission resolution** — registered command IDs for programmable permission handling
+
+### Diff & File Change Rendering
+- **Live diff rendering during chat** — ACP diff hunks rendered as `ChatResponseMultiDiffPart`
+- **Cumulative session diffs** — per-file aggregation across all tool calls in a session
+- **Metadata-based diff artifacts** — extracted from tool `rawOutput.metadata.files`
+- **Full-file snapshot diffs** — before/after workspace snapshots for complete file comparison
+- **Jump-to-file buttons** — clickable file links at end of each turn
+- **Final "Modified files" summary** — cumulative diff part at end of each response
+- **Virtual diff content provider (`acp-diff:` scheme)** — side-by-side diff views for changed files
+- **Inline diff markdown** — LCS-based diff computation for in-chat display
+- **Diff statistics** — added/removed line counts per file
+
+### File Write Coordination
+- **Per-URI serialized writes** — write coordinator ensures no concurrent writes to the same file
+- **Open-document awareness** — writes to open documents use `WorkspaceEdit` + `save()` to avoid buffer conflicts
+- **External edit tracking** — `externalEdit()` registrations resolved when the authoritative write completes
+
+### MCP Server Integration
+- **Per-agent MCP server configuration** — defined in `acpClient.agents.<id>.mcpServers`
+- **Workspace `.vscode/mcp.json` import** — session-scoped, read on session create/reload
+- **User profile `mcp.json` import** — from the active VS Code profile
+- **Plugin MCP server discovery** — from Copilot, Claude, and OpenPlugin format plugins
+- **Both stdio and HTTP transport support**
+- **Token expansion** — `${CLAUDE_PLUGIN_ROOT}`, `${PLUGIN_ROOT}`, workspace folder variables
+- **MCP server precedence**: explicit config > plugin > workspace `.vscode/mcp.json` > active profile `mcp.json`
+
+### Plugin & Skill Discovery
+- **Plugin discovery** from `chat.pluginLocations`, Copilot CLI installed plugins, VS Code installed agent plugins
+- **Skill directory scanning** — discovers skills from `SKILL.md` files in configured paths
+- **Plugin compatibility logging** — surfaces unsupported plugin components (hooks, agents, skills) in logs without breaking
+
+### Questions & Interactions
+- **Question carousel support** — agents can present multi-choice questions inline during conversations
+- **Question answer routing** — responses sent back via `sendQuestionAnswers` ACP extension notification
+
+### Plan Support
+- **Plan update rendering** — ACP plan entries displayed as checklists in chat
+- **Plan action buttons** — "Continue Plan", "Request Plan Changes", "Explain Plan" for interactive follow-up
+
+### Context Window & Usage
+- **Usage update rendering** — context window token usage displayed in chat
+- **Context window warnings** — visual warnings at 75% and 90% token thresholds
+- **Draft `usage_update` notification support** — forward-compatible with evolving ACP spec
+- **Cost tracking** — cumulative session cost displayed alongside usage updates
+
+### Auggie Integration
+- **Auggie manual command import** — runs `auggie command help`, parses output, stores in settings via `ACP: Import Auggie manual commands` command
+
+### Commands & Settings
+- `ACP: Clear all sessions` — `acp.clearSessions`
+- `ACP: Import Auggie manual commands` — `acp.importAuggieManualCommands`
+- `ACP: Insert Chat Text` — internal command for plan buttons
+- `ACP: Request Plan Changes` — internal command with input box
+- Per-agent settings for `defaultMode`, `defaultModel`, `defaultThinkingEffort`
+- Fallback default model provider when Copilot is not available
+
+### Tracing & Logging
+- **ACP Client output channel** — structured logging for all protocol activity
+- **Redacting tracer** — redacts large content at trace log level for security and readability
+- **Capability negotiation logging** — every agent startup logs advertised and disabled capabilities
+
+### Testing Infrastructure
+- **Preprogrammed ACP client** — mock client for deterministic test scenarios
+- **12 test scenario files** — covering all major features and edge cases
+- **Mock ACP client factory** — enabled via `MOCK_CLIENT=true` environment variable
+
+## Supported Agents
+
+- [OpenCode](https://opencode.ai)
+- [cagent](https://docs.docker.com/ai/cagent/)
+- [Codex CLI](https://github.com/openai/codex) via [codex-acp](https://github.com/zed-industries/codex-acp)
+- [Gemini CLI](https://geminicli.com)
+- [Auggie CLI](https://docs.augmentcode.com/cli/overview) via `auggie --acp`
+- [Claude Code](https://docs.anthropic.com/en/docs/claude-code/overview)
+- [Mistral Vibe](https://github.com/georges-gomes/mistral-vibe)
+- [Copilot](https://github.com/features/copilot)
 
 ## Configuration
 
@@ -39,9 +144,7 @@ If you are using Augment, configure **Auggie directly** instead of routing it th
   "auggie": {
     "label": "Auggie",
     "command": "auggie",
-    "args": [
-      "--acp"
-    ],
+    "args": ["--acp"],
     "enabled": true
   }
 }
@@ -73,10 +176,7 @@ ACP-local `mcpServers` entries currently support both `stdio` and `http` transpo
   "cagent": {
     "label": "Docker cagent",
     "command": "/opt/bin/cagent",
-    "args": [
-      "acp",
-      "/agents/coding.yaml"
-    ],
+    "args": ["acp", "/agents/coding.yaml"],
     "defaultMode": "code",
     "defaultModel": "gpt-5",
     "defaultThinkingEffort": "megathink",
@@ -86,17 +186,13 @@ ACP-local `mcpServers` entries currently support both `stdio` and `http` transpo
         "name": "workspace-tools",
         "command": "/opt/bin/mcp-tool",
         "args": ["serve"],
-        "env": {
-          "WORKSPACE": "${workspaceFolder}"
-        }
+        "env": { "WORKSPACE": "${workspaceFolder}" }
       },
       {
         "type": "http",
         "name": "remote-tools",
         "url": "http://localhost:3000",
-        "headers": {
-          "Authorization": "Bearer ${input:tool-token}"
-        }
+        "headers": { "Authorization": "Bearer ${input:tool-token}" }
       }
     ],
     "enabled": false
@@ -104,9 +200,7 @@ ACP-local `mcpServers` entries currently support both `stdio` and `http` transpo
   "opencode": {
     "label": "OpenCode Agent",
     "command": "/opt/bin/opencode",
-    "args": [
-      "acp"
-    ],
+    "args": ["acp"],
     "mcpServers": [],
     "enabled": true
   }
@@ -197,3 +291,35 @@ Once an ACP session reports `availableCommands`, type `/` in the chat input to b
 For namespaced ACP commands such as `oma--oh-my-auggie:oma-plan` or `opencode:review-pr`, slash completion now matches both the full canonical command name and the short tail after `:`. The completion list shows the short alias for readability, but inserting a command still uses the full canonical ACP command so Auggie, OpenCode, and similar agents receive exactly the identifier they advertised.
 
 Note that ACP mode is not identical to an agent's native UI. For example, Augment documents that Auggie's ACP mode does **not** expose every interactive-mode feature, so what appears in VS Code depends on the data Auggie actually emits over ACP.
+
+## Architecture
+
+Key source files and their responsibilities:
+
+| File | Purpose |
+|---|---|
+| `src/extension.ts` | Extension activation, agent wiring, proposed API registration |
+| `src/acpClient.ts` | ACP protocol client — spawns subprocess, ndjson I/O, session lifecycle |
+| `src/acpSessionManager.ts` | Session CRUD, in-memory/disk tracking, command/skill discovery |
+| `src/acpChatParticipant.ts` | Chat request handler, prompt building, notification rendering |
+| `src/acpChatSessionContentProvider.ts` | VS Code picker for mode/model/think, option change handling |
+| `src/acpLifecycledChatSessionItemController.ts` | Sidebar session list management |
+| `src/acpSessionDb.ts` | SQLite persistence layer for sessions |
+| `src/acpSessionSyncer.ts` | Native ACP session import |
+| `src/agentRegistry.ts` | Reads/watches `acpClient.agents` config, provides normalized entries |
+| `src/permissionPrompts.ts` | In-chat permission UI with risk assessment |
+| `src/commandMatching.ts` | Slash command matching, normalization, scoring |
+| `src/chatRenderingUtils.ts` | Tool info extraction, lifecycle summaries, diff computation |
+| `src/diffRendering.ts` | Diff artifact collection, merging, cumulative aggregation |
+| `src/diffContentProvider.ts` | Virtual document provider for `acp-diff:` scheme |
+| `src/turnBuilder.ts` | Reconstructs VS Code turns from ACP SessionNotification arrays |
+| `src/fileWriteCoordinator.ts` | Per-URI serialized writes with open-document awareness |
+| `src/externalEditTracker.ts` | External edit registration, resolution on write completion |
+| `src/mcpConfigImporter.ts` | Imports MCP servers from workspace/profile mcp.json |
+| `src/pluginDiscovery.ts` | Agent plugin discovery from multiple search roots |
+| `src/pluginCompatibility.ts` | Plugin MCP import with token expansion |
+| `src/skillDiscovery.ts` | SKILL.md file scanning |
+| `src/chatCommandSerialization.ts` | XML-structured command prompts |
+| `src/chatIdentifiers.ts` | URI scheme helpers for `acp-{agentId}:/{sessionId}` |
+| `src/acpLanguageModelProvider.ts` | ACP LM provider registering agent models |
+| `src/acpChatSessionItemProvider.ts` | Session item provider for sidebar list |

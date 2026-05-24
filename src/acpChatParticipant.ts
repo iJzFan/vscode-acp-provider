@@ -12,6 +12,7 @@ import {
   formatToolLifecycleSummary,
   formatUsageUpdateSummary,
   getSubAgentInvocationId,
+  getToolCompletionMessage,
   getToolInfo,
   isTerminalToolInvocation,
   makeCommandLink,
@@ -72,19 +73,19 @@ export class AcpChatParticipant extends DisposableBase {
   requestHandler: vscode.ChatRequestHandler = this.handleRequest.bind(this);
   onDidReceiveFeedback: vscode.Event<vscode.ChatResultFeedback> =
     new vscode.EventEmitter<vscode.ChatResultFeedback>().event;
-  readonly commandCompletionProvider: vscode.ChatParticipantCompletionItemProvider = {
-    provideCompletionItems: (query, token) =>
-      this.provideCommandCompletionItems(query, token),
-  };
+  readonly commandCompletionProvider: vscode.ChatParticipantCompletionItemProvider =
+    {
+      provideCompletionItems: (query, token) =>
+        this.provideCommandCompletionItems(query, token),
+    };
 
-  private static readonly _chatCompletionItemAvailable: boolean =
-    (() => {
-      try {
-        return typeof vscode.ChatCompletionItem === "function";
-      } catch {
-        return false;
-      }
-    })();
+  private static readonly _chatCompletionItemAvailable: boolean = (() => {
+    try {
+      return typeof vscode.ChatCompletionItem === "function";
+    } catch {
+      return false;
+    }
+  })();
 
   constructor(
     private readonly permissionManager: PermissionPromptManager,
@@ -106,6 +107,7 @@ export class AcpChatParticipant extends DisposableBase {
     string,
     {
       name: string;
+      kind?: ToolInfo["kind"];
       invocationMessage?: string;
       subAgentInvocationId?: string;
     }
@@ -168,7 +170,12 @@ export class AcpChatParticipant extends DisposableBase {
           const item = new vscode.ChatCompletionItem(
             `skill-${skill.name}`,
             formatSlashCommandLabel(skill.name),
-            [{ level: vscode.ChatVariableLevel.Short, value: skill.description }],
+            [
+              {
+                level: vscode.ChatVariableLevel.Short,
+                value: skill.description,
+              },
+            ],
           );
           item.icon = new vscode.ThemeIcon("book");
           item.insertText = `/${skill.name} `;
@@ -194,13 +201,15 @@ export class AcpChatParticipant extends DisposableBase {
           const item = new vscode.ChatCompletionItem(
             `acp-command-${command.name}`,
             formatSlashCommandLabel(command.name),
-            [{
-              level: vscode.ChatVariableLevel.Short,
-              value:
-                shortName !== canonicalName
-                  ? `${shortName} (${canonicalName})`
-                  : canonicalName,
-            }],
+            [
+              {
+                level: vscode.ChatVariableLevel.Short,
+                value:
+                  shortName !== canonicalName
+                    ? `${shortName} (${canonicalName})`
+                    : canonicalName,
+              },
+            ],
           );
 
           item.icon = new vscode.ThemeIcon("terminal-cmd");
@@ -442,7 +451,9 @@ export class AcpChatParticipant extends DisposableBase {
       prompt: trimmedPrompt,
       command,
       knownCommands: [
-        ...this.sessionManager.getKnownAvailableCommands().map((item) => item.name),
+        ...this.sessionManager
+          .getKnownAvailableCommands()
+          .map((item) => item.name),
         ...this.sessionManager.getDiscoveredSkills().map((item) => item.name),
       ],
     });
@@ -631,6 +642,7 @@ export class AcpChatParticipant extends DisposableBase {
         const invocationMessage = info.input ?? "";
         this.toolInvocations.set(update.toolCallId, {
           name: info.name,
+          kind: info.kind,
           invocationMessage,
           subAgentInvocationId,
         });
@@ -737,25 +749,36 @@ export class AcpChatParticipant extends DisposableBase {
         if (invocationMessage) {
           part.invocationMessage = invocationMessage;
         }
-        if (info.output) {
-          part.pastTenseMessage = info.output;
+        const completionMessage = getToolCompletionMessage(
+          update,
+          info,
+          tracked?.kind,
+          tracked?.invocationMessage,
+        );
+        if (completionMessage) {
+          part.pastTenseMessage = completionMessage;
         }
         part.isConfirmed = update.status === "completed";
         part.isError = update.status === "failed" ? true : false;
         part.isComplete = true;
-        if (update.status === "completed") {
-          part.presentation = "hiddenAfterComplete";
-        }
         const subAgentInvocationId =
           tracked?.subAgentInvocationId ?? getSubAgentInvocationId(update);
         if (subAgentInvocationId) {
           part.subAgentInvocationId = subAgentInvocationId;
         }
-        const terminalData = isTerminalToolInvocation(update, info)
-          ? buildTerminalToolInvocationData(update, info)
+        const terminalData = isTerminalToolInvocation(
+          update,
+          info,
+          tracked?.kind,
+        )
+          ? buildTerminalToolInvocationData(
+              update,
+              info,
+              tracked?.invocationMessage,
+            )
           : undefined;
         part.toolSpecificData =
-          terminalData ?? buildMcpToolInvocationData(info);
+          terminalData ?? buildMcpToolInvocationData(update, info);
         response.progress(
           formatToolLifecycleSummary(
             update.status === "failed" ? "failed" : "completed",
@@ -801,7 +824,10 @@ export class AcpChatParticipant extends DisposableBase {
       // draft apis
       case "usage_update": {
         if (isUsageUpdate(update)) {
-          const incr = Math.max(0, update.used - (session.contextWindowUsed || 0));
+          const incr = Math.max(
+            0,
+            update.used - (session.contextWindowUsed || 0),
+          );
           this.sessionManager.reportContextWindowSize(session, {
             size: update.size,
             used: update.used,
@@ -954,12 +980,12 @@ export class AcpChatParticipant extends DisposableBase {
       const hint = command.input?.hint ? ` — ${command.input.hint}` : "";
       const canonicalName = normalizeSlashCommandQuery(command.name);
       const shortName = getShortCommandName(canonicalName);
-      const linkLabel = shortName === canonicalName
-        ? `/${canonicalName}`
-        : `/${shortName}`;
-      const canonicalNote = shortName === canonicalName
-        ? undefined
-        : `_Canonical:_ \`/${canonicalName}\``;
+      const linkLabel =
+        shortName === canonicalName ? `/${canonicalName}` : `/${shortName}`;
+      const canonicalNote =
+        shortName === canonicalName
+          ? undefined
+          : `_Canonical:_ \`/${canonicalName}\``;
       const sourceNote = `_Source:_ ${command.source === "manual" ? "manually configured/imported" : "ACP advertised"}`;
       const link = makeCommandLink(linkLabel, `/${canonicalName}`);
       if (command.description?.trim() || canonicalNote) {
@@ -1012,7 +1038,9 @@ export class AcpChatParticipant extends DisposableBase {
     response.button({
       command: "acp.insertChatText",
       title: "Continue Plan",
-      arguments: ["Continue with the current plan and call out any changes before you make them."],
+      arguments: [
+        "Continue with the current plan and call out any changes before you make them.",
+      ],
     });
     response.button({
       command: "acp.requestPlanChanges",
@@ -1105,9 +1133,10 @@ export class AcpChatParticipant extends DisposableBase {
     const visibleFiles = touchedFiles.slice(0, 5);
     const remainingCount = touchedFiles.length - visibleFiles.length;
     const fileList = visibleFiles.map((file) => `\`${file}\``).join(", ");
-    const title = this.hasDiffContent(update) || info.kind === "edit"
-      ? "Touched files"
-      : "Files involved";
+    const title =
+      this.hasDiffContent(update) || info.kind === "edit"
+        ? "Touched files"
+        : "Files involved";
     const suffix = remainingCount > 0 ? ` and ${remainingCount} more` : "";
     response.markdown(`**${title}:** ${fileList}${suffix}\n\n`);
   }
@@ -1160,7 +1189,10 @@ export class AcpChatParticipant extends DisposableBase {
       session,
       info,
     );
-    this.sessionManager.recordToolDiffArtifacts(session.acpSessionId, diffArtifacts);
+    this.sessionManager.recordToolDiffArtifacts(
+      session.acpSessionId,
+      diffArtifacts,
+    );
     pushToolDiffPart(stream, diffArtifacts);
   }
 
@@ -1171,10 +1203,9 @@ export class AcpChatParticipant extends DisposableBase {
     const artifacts = this.sessionManager.getCumulativeToolDiffArtifacts(
       session.acpSessionId,
     );
-    const diffPart = createToolDiffPart(
-      artifacts,
-      { includeGoToFileUri: false },
-    );
+    const diffPart = createToolDiffPart(artifacts, {
+      includeGoToFileUri: false,
+    });
     if (!diffPart) {
       return;
     }
@@ -1205,7 +1236,10 @@ export class AcpChatParticipant extends DisposableBase {
     const cumulativeArtifacts = new Map(
       this.sessionManager
         .getCumulativeToolDiffArtifacts(session.acpSessionId)
-        .map((artifact) => [getToolDiffArtifactKey(artifact.fileUri), artifact] as const),
+        .map(
+          (artifact) =>
+            [getToolDiffArtifactKey(artifact.fileUri), artifact] as const,
+        ),
     );
 
     for (const fileUri of targetUris) {
@@ -1244,16 +1278,21 @@ export class AcpChatParticipant extends DisposableBase {
       workspaceRoot,
     );
     const fallbackArtifactsByKey = new Map(
-      fallbackArtifacts.map((artifact) => [getToolDiffArtifactKey(artifact.fileUri), artifact] as const),
+      fallbackArtifacts.map(
+        (artifact) =>
+          [getToolDiffArtifactKey(artifact.fileUri), artifact] as const,
+      ),
     );
     const targetUrisByKey = new Map(
-      this.getToolDiffTargetUris(info, update).map((fileUri) => [
-        getToolDiffArtifactKey(fileUri),
-        fileUri,
-      ] as const),
+      this.getToolDiffTargetUris(info, update).map(
+        (fileUri) => [getToolDiffArtifactKey(fileUri), fileUri] as const,
+      ),
     );
     for (const artifact of fallbackArtifacts) {
-      targetUrisByKey.set(getToolDiffArtifactKey(artifact.fileUri), artifact.fileUri);
+      targetUrisByKey.set(
+        getToolDiffArtifactKey(artifact.fileUri),
+        artifact.fileUri,
+      );
     }
     if (!targetUrisByKey.size) {
       return fallbackArtifacts;
@@ -1267,17 +1306,19 @@ export class AcpChatParticipant extends DisposableBase {
     for (const [key, fileUri] of targetUrisByKey) {
       const baseline = baselineMap?.get(key);
       const fallback = fallbackArtifactsByKey.get(key);
-      const currentText = await this.readWorkspaceText(fileUri).catch((error) => {
-        this.logger.warn(
-          `Failed to read workspace file for cumulative diff ${fileUri.toString()}: ${extractReadableErrorMessage(error)}`,
-        );
-        return fallback?.hasModified ? fallback.newText : undefined;
-      });
-      const hasOriginal = baseline?.hasOriginal ?? fallback?.hasOriginal ?? false;
+      const currentText = await this.readWorkspaceText(fileUri).catch(
+        (error) => {
+          this.logger.warn(
+            `Failed to read workspace file for cumulative diff ${fileUri.toString()}: ${extractReadableErrorMessage(error)}`,
+          );
+          return fallback?.hasModified ? fallback.newText : undefined;
+        },
+      );
+      const hasOriginal =
+        baseline?.hasOriginal ?? fallback?.hasOriginal ?? false;
       const oldText = baseline?.oldText ?? fallback?.oldText ?? "";
-      const hasModified = currentText !== undefined
-        ? true
-        : (fallback?.hasModified ?? false);
+      const hasModified =
+        currentText !== undefined ? true : (fallback?.hasModified ?? false);
       const newText = currentText ?? fallback?.newText ?? "";
       if (!hasOriginal && !hasModified) {
         continue;
@@ -1351,9 +1392,10 @@ export class AcpChatParticipant extends DisposableBase {
   }
 
   private getToolCommandParts(data: ToolCall | ToolCallUpdate): string[] {
-    const raw = data.status === "pending" || data.status === "in_progress"
-      ? data.rawInput
-      : data.rawOutput;
+    const raw =
+      data.status === "pending" || data.status === "in_progress"
+        ? data.rawInput
+        : data.rawOutput;
     if (!raw || typeof raw !== "object" || !("command" in raw)) {
       return [];
     }
@@ -1400,11 +1442,16 @@ export class AcpChatParticipant extends DisposableBase {
     );
   }
 
-  private getToolDiffBaselineKey(sessionId: string, toolCallId: string): string {
+  private getToolDiffBaselineKey(
+    sessionId: string,
+    toolCallId: string,
+  ): string {
     return `${sessionId}:${toolCallId}`;
   }
 
-  private async readWorkspaceText(uri: vscode.Uri): Promise<string | undefined> {
+  private async readWorkspaceText(
+    uri: vscode.Uri,
+  ): Promise<string | undefined> {
     const openDocument = vscode.workspace.textDocuments.find(
       (document) => document.uri.toString() === uri.toString(),
     );
@@ -1447,7 +1494,9 @@ export class AcpChatParticipant extends DisposableBase {
               const callback = new ResolvableCallback();
               callbacks.push(callback);
               unregisters.push(
-                registerExternalEdit(info.toolCallId, r, () => callback.resolve()),
+                registerExternalEdit(info.toolCallId, r, () =>
+                  callback.resolve(),
+                ),
               );
               stream.externalEdit(r, callback.callback);
             });
@@ -1477,7 +1526,9 @@ export class AcpChatParticipant extends DisposableBase {
         const trackedExternalEdit = this.externalEditorCallbacks.get(
           info.toolCallId,
         );
-        trackedExternalEdit?.callbacks.forEach((callback) => callback.resolve());
+        trackedExternalEdit?.callbacks.forEach((callback) =>
+          callback.resolve(),
+        );
         trackedExternalEdit?.unregisters.forEach((unregister) => unregister());
         this.externalEditorCallbacks.delete(info.toolCallId);
 

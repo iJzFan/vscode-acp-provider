@@ -39,9 +39,6 @@ export function trustedCommandMarkdown(content: string): vscode.MarkdownString {
 }
 
 const DEFAULT_TERMINAL_LANGUAGE = "shell";
-const POWERSHELL_CLIXML_MARKER = "#< CLIXML";
-
-export type ToolLifecyclePhase = "started" | "completed" | "failed";
 
 export type ToolInfo = {
   toolCallId: string;
@@ -67,6 +64,303 @@ type ToolQuestionPayloadContainer = {
   questions?: unknown;
 };
 
+type StructuredToolOutputSection = {
+  label: string;
+  value: string;
+};
+
+type ToolOutputData = {
+  text: string;
+  mimeType: string;
+};
+
+type WrappedCommandResult = {
+  exitCode?: number;
+  output: string;
+};
+
+type AcpTaggedOutputTag = "path" | "type" | "entries" | "content";
+
+const ACP_TAGGED_OUTPUT_REGEX =
+  /<(path|type|entries|content)>([\s\S]*?)<\/\1>/gi;
+const ANSI_ESCAPE_REGEX = /(?:\u001b|ESC)\[[0-9;?]*[ -/]*[@-~]/gi;
+const C1_ANSI_ESCAPE_REGEX = /\u009b[0-?]*[ -/]*[@-~]/g;
+const BARE_ANSI_STYLE_REGEX = /\[(?:\d{1,3}(?:;\d{1,3})*)m/g;
+const JEKYLL_CODE_OPEN_REGEX = /^\s*{%\s*code(?:\s+[^%]+)?\s*%}\s*$/gim;
+const JEKYLL_CODE_CLOSE_REGEX = /^\s*{%\s*endcode\s*%}\s*$/gim;
+const FIGURE_TAG_REGEX =
+  /<figure>\s*<img\b([^>]*)>\s*(?:<figcaption>([\s\S]*?)<\/figcaption>)?\s*<\/figure>/gi;
+const HTML_ATTRIBUTE_REGEX = /([a-zA-Z:-]+)\s*=\s*"([^"]*)"/g;
+const WRAPPED_COMMAND_RESULT_REGEX =
+  /^(?:Here are the results from executing the command\.\n)?<return-code>\n([\s\S]*?)\n<\/return-code>\n<output>\n([\s\S]*?)\n<\/output>$/i;
+
+function formatPowerShellCliXml(value: string): string {
+  const marker = "#< CLIXML";
+  const index = value.indexOf(marker);
+  if (index < 0) {
+    return value;
+  }
+
+  const leadingText = value.slice(0, index).trimEnd();
+  const clixmlText = value.slice(index).trim();
+  const trailingPayload = clixmlText.slice(marker.length).trimStart();
+  const progressXmlIndex = trailingPayload.indexOf("<Objs Version=");
+  if (progressXmlIndex >= 0) {
+    const payloadText = trailingPayload.slice(0, progressXmlIndex).trim();
+    if (payloadText) {
+      return [leadingText, payloadText]
+        .filter((part) => part.length > 0)
+        .join("\n\n");
+    }
+  }
+
+  if (index === 0) {
+    return clixmlText;
+  }
+
+  return [leadingText, "PowerShell CLIXML:", clixmlText]
+    .filter((part) => part.length > 0)
+    .join("\n\n");
+}
+
+function parseWrappedCommandResult(
+  value: string,
+): WrappedCommandResult | undefined {
+  const normalized = value.replace(/\r\n?/g, "\n").trim();
+  const match = normalized.match(WRAPPED_COMMAND_RESULT_REGEX);
+  if (!match) {
+    return undefined;
+  }
+
+  const parsedExitCode = Number.parseInt(match[1].trim(), 10);
+  return {
+    exitCode: Number.isFinite(parsedExitCode) ? parsedExitCode : undefined,
+    output: match[2].trimEnd(),
+  };
+}
+
+function decodeXmlEntities(value: string): string {
+  return value
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&amp;/g, "&")
+    .replace(/&quot;/g, '"')
+    .replace(/&apos;/g, "'");
+}
+
+function stripHtmlTags(value: string): string {
+  return value.replace(/<[^>]+>/g, "");
+}
+
+function stripAnsiSequences(value: string): string {
+  return value
+    .replace(ANSI_ESCAPE_REGEX, "")
+    .replace(C1_ANSI_ESCAPE_REGEX, "")
+    .replace(BARE_ANSI_STYLE_REGEX, "");
+}
+
+function normalizeTerminalOutputText(value: string): string {
+  return stripAnsiSequences(value).replace(/\r\n?/g, "\n").trimEnd();
+}
+
+function parseHtmlAttributes(value: string): Record<string, string> {
+  const attributes: Record<string, string> = {};
+  HTML_ATTRIBUTE_REGEX.lastIndex = 0;
+  let match: RegExpExecArray | null;
+
+  while ((match = HTML_ATTRIBUTE_REGEX.exec(value)) !== null) {
+    attributes[match[1].toLowerCase()] = decodeXmlEntities(match[2]);
+  }
+
+  return attributes;
+}
+
+function normalizeMarkdownPreview(value: string): string {
+  const normalized = decodeXmlEntities(value).replace(/\r\n?/g, "\n").trim();
+  const withCodeFences = normalized
+    .replace(JEKYLL_CODE_OPEN_REGEX, "```")
+    .replace(JEKYLL_CODE_CLOSE_REGEX, "```");
+
+  return withCodeFences.replace(
+    FIGURE_TAG_REGEX,
+    (_match, imgAttributes: string, captionRaw?: string) => {
+      const attributes = parseHtmlAttributes(imgAttributes);
+      const caption = stripHtmlTags(decodeXmlEntities(captionRaw ?? "")).trim();
+      const alt = (attributes.alt ?? "").trim();
+      const src = (attributes.src ?? "").trim();
+      const summary = caption || alt || "Image";
+      const lines = [`> Figure: ${summary}`];
+      if (src) {
+        lines.push(`> Image source: ${src}`);
+      }
+      return lines.join("\n");
+    },
+  );
+}
+
+function looksLikeMarkdownContent(value: string): boolean {
+  return (
+    /(?:^|\n)\s{0,3}#{1,6}\s+\S/m.test(value) ||
+    /(?:^|\n)\s*[-*+]\s+\S/m.test(value) ||
+    /(?:^|\n)\s*\d+\.\s+\S/m.test(value) ||
+    /```/.test(value) ||
+    /\[[^\]]+\]\([^)]+\)/.test(value) ||
+    /<figure\b/i.test(value) ||
+    /{%\s*(?:code|endcode)\b/i.test(value)
+  );
+}
+
+function normalizeAcpTaggedFreeText(value: string): string | undefined {
+  const normalized = decodeXmlEntities(value).replace(/\s+/g, " ").trim();
+  if (!normalized || /^[,;:|—–-]+$/.test(normalized)) {
+    return undefined;
+  }
+  return normalized;
+}
+
+function normalizeAcpTaggedBody(
+  tag: AcpTaggedOutputTag,
+  value: string,
+): string {
+  const normalized = stripAnsiSequences(
+    decodeXmlEntities(value).replace(/\r\n?/g, "\n").trim(),
+  );
+  if (
+    tag === "content" &&
+    normalized &&
+    !normalized.includes("\n") &&
+    /(?:^|\s)\d+:\s/.test(normalized)
+  ) {
+    return normalized.replace(/\s(?=\d+:\s)/g, "\n");
+  }
+  return normalized;
+}
+
+function formatAcpTaggedOutput(value: string): string | undefined {
+  if (!/(?:<path>|<type>|<entries>|<content>)/i.test(value)) {
+    return undefined;
+  }
+
+  ACP_TAGGED_OUTPUT_REGEX.lastIndex = 0;
+  const blocks: string[] = [];
+  let currentLines: string[] = [];
+  let lastIndex = 0;
+  let match: RegExpExecArray | null;
+
+  const flushCurrent = (): void => {
+    if (!currentLines.length) {
+      return;
+    }
+    blocks.push(currentLines.join("\n"));
+    currentLines = [];
+  };
+
+  const pushFreeText = (text: string): void => {
+    const normalized = normalizeAcpTaggedFreeText(text);
+    if (normalized) {
+      currentLines.push(normalized);
+    }
+  };
+
+  while ((match = ACP_TAGGED_OUTPUT_REGEX.exec(value)) !== null) {
+    pushFreeText(value.slice(lastIndex, match.index));
+
+    const tag = match[1].toLowerCase() as AcpTaggedOutputTag;
+    const body = normalizeAcpTaggedBody(tag, match[2]);
+    if (!body) {
+      lastIndex = match.index + match[0].length;
+      continue;
+    }
+
+    if (tag === "path" && currentLines.length > 0) {
+      flushCurrent();
+    }
+
+    switch (tag) {
+      case "path":
+        currentLines.push(`Path: ${body}`);
+        break;
+      case "type":
+        currentLines.push(`Type: ${body}`);
+        break;
+      case "entries":
+        currentLines.push(`Entries:\n${body}`);
+        break;
+      case "content":
+        currentLines.push(`Content:\n${body}`);
+        break;
+    }
+
+    lastIndex = match.index + match[0].length;
+  }
+
+  pushFreeText(value.slice(lastIndex));
+  flushCurrent();
+
+  return blocks.length > 0 ? blocks.join("\n\n") : undefined;
+}
+
+function formatToolOutputValue(value: string): string {
+  const unwrapped = parseWrappedCommandResult(value)?.output ?? value;
+  const ansiNormalized = normalizeTerminalOutputText(unwrapped);
+  const cliXmlFormatted = formatPowerShellCliXml(ansiNormalized);
+  if (cliXmlFormatted !== ansiNormalized) {
+    return looksLikeMarkdownContent(cliXmlFormatted)
+      ? normalizeMarkdownPreview(cliXmlFormatted)
+      : cliXmlFormatted;
+  }
+
+  const formatted = formatAcpTaggedOutput(cliXmlFormatted) ?? cliXmlFormatted;
+  return looksLikeMarkdownContent(formatted)
+    ? normalizeMarkdownPreview(formatted)
+    : formatted;
+}
+
+function getStructuredToolOutputSections(
+  rawOutput: Record<string, unknown>,
+): StructuredToolOutputSection[] {
+  const sections: StructuredToolOutputSection[] = [];
+  const seenValues = new Set<string>();
+  const candidates: Array<[string, unknown]> = [
+    ["formatted output", rawOutput.formatted_output],
+    ["aggregated output", rawOutput.aggregated_output],
+    ["raw output", rawOutput.output],
+  ];
+
+  for (const [label, rawValue] of candidates) {
+    if (typeof rawValue !== "string") {
+      continue;
+    }
+
+    const value = formatToolOutputValue(rawValue).trim();
+    if (!value || seenValues.has(value)) {
+      continue;
+    }
+
+    seenValues.add(value);
+    sections.push({ label, value });
+  }
+
+  return sections;
+}
+
+function formatStructuredToolOutput(
+  rawOutput: Record<string, unknown>,
+): string | undefined {
+  const sections = getStructuredToolOutputSections(rawOutput);
+  if (sections.length === 0) {
+    return undefined;
+  }
+
+  if (sections.length === 1) {
+    return sections[0].value;
+  }
+
+  return sections
+    .map((section) => `=== ${section.label} ===\n${section.value}`)
+    .join("\n\n");
+}
+
 export function getToolInfo(
   toolCallUpdate: ToolCallUpdate | ToolCall,
 ): ToolInfo {
@@ -77,17 +371,11 @@ export function getToolInfo(
   };
 
   if (
-    toolCallUpdate.status === "in_progress" ||
-    toolCallUpdate.status === "pending"
+    toolCallUpdate.status !== "completed" &&
+    toolCallUpdate.status !== "failed"
   ) {
-    if (
-      toolCallUpdate.rawInput &&
-      typeof toolCallUpdate.rawInput === "object" &&
-      "command" in toolCallUpdate.rawInput &&
-      Array.isArray(toolCallUpdate.rawInput.command)
-    ) {
-      response.input = toolCallUpdate.rawInput.command.join(" ");
-    } else {
+    response.input = getToolInputText(toolCallUpdate.rawInput);
+    if (!response.input) {
       toolCallUpdate.content
         ?.filter((c) => c.type === "content")
         .map((c) => c.content)
@@ -107,23 +395,23 @@ export function getToolInfo(
       toolCallUpdate.rawOutput &&
       typeof toolCallUpdate.rawOutput === "object"
     ) {
-      if (
-        "command" in toolCallUpdate.rawOutput &&
-        Array.isArray(toolCallUpdate.rawOutput.command)
-      ) {
-        response.input = toolCallUpdate.rawOutput.command.join(" ");
-        if (response.name === "") {
-          const firstLine = response.input.split("\n")[0];
-          response.name =
-            firstLine.length > 30
-              ? firstLine.substring(0, 30) + "..."
-              : firstLine;
-        }
+      const rawOutput = toolCallUpdate.rawOutput as Record<string, unknown>;
+      response.input =
+        getToolInputText(rawOutput) ??
+        getToolInputText(toolCallUpdate.rawInput);
+      if (response.name === "" && response.input) {
+        const firstLine = response.input.split("\n")[0];
+        response.name =
+          firstLine.length > 30
+            ? firstLine.substring(0, 30) + "..."
+            : firstLine;
       }
 
-      response.output = collectStructuredToolOutput(toolCallUpdate.rawOutput);
-      if (!response.output) {
-        response.output = `${JSON.stringify(toolCallUpdate.rawOutput, null, 2)}`;
+      const structuredOutput = formatStructuredToolOutput(rawOutput);
+      if (structuredOutput) {
+        response.output = structuredOutput;
+      } else if (Object.keys(rawOutput).length > 0) {
+        response.output = `${JSON.stringify(rawOutput, null, 2)}`;
       }
     } else {
       toolCallUpdate.content
@@ -135,10 +423,6 @@ export function getToolInfo(
           return response.output;
         }, "");
     }
-  }
-
-  if (typeof response.output === "string") {
-    response.output = sanitizeToolOutput(response.output);
   }
 
   // extract locations and diff paths as edit resources
@@ -167,144 +451,10 @@ export function getToolInfo(
   return response;
 }
 
-export function formatToolLifecycleSummary(
-  phase: ToolLifecyclePhase,
-  update: ToolCall | ToolCallUpdate,
-  info: ToolInfo,
-): string {
-  const touchedFiles = getToolRelatedPaths(update);
-  const contentTypes = update.content?.map((content) => content.type) ?? [];
-  const summaryParts = [
-    `id=${update.toolCallId}`,
-    `name=${info.name || update.title || "Tool"}`,
-    `kind=${info.kind}`,
-    `status=${update.status ?? "pending"}`,
-    `content=${contentTypes.length ? contentTypes.join(",") : "none"}`,
-    `rawInput=${update.rawInput ? "yes" : "no"}`,
-    `rawOutput=${update.rawOutput ? "yes" : "no"}`,
-    `files=${touchedFiles.length ? touchedFiles.join(", ") : "none"}`,
-  ];
-  return `Tool ${phase}: ${summaryParts.join("; ")}`;
-}
-
-export function formatCurrentModeUpdateSummary(currentModeId: string): string {
-  return `Mode changed: ${currentModeId}`;
-}
-
-export function formatUsageUpdateSummary(update: {
-  used: number;
-  size: number;
-  cost?: { amount: number; currency: string };
-}): string {
-  const percentage = update.size > 0
-    ? Math.round((update.used / update.size) * 1000) / 10
-    : 0;
-  const percentText = Number.isInteger(percentage)
-    ? percentage.toFixed(0)
-    : percentage.toFixed(1);
-  const summaryParts = [
-    `Context window usage: ${formatNumber(update.used)} / ${formatNumber(update.size)} tokens (${percentText}%)`,
-  ];
-  if (update.cost) {
-    summaryParts.push(`Cost: ${update.cost.currency} ${String(update.cost.amount)}`);
-  }
-  return summaryParts.join(" | ");
-}
-
-function sanitizeToolOutput(output: string): string | undefined {
-  const trimmed = output.trimEnd();
-  if (!trimmed.length) {
-    return undefined;
-  }
-
-  const clixmlMarkerIndex = trimmed.indexOf(POWERSHELL_CLIXML_MARKER);
-  if (clixmlMarkerIndex < 0) {
-    return trimmed;
-  }
-
-  const beforeCliXml = trimmed.slice(0, clixmlMarkerIndex).trimEnd();
-  const clixml = trimmed.slice(clixmlMarkerIndex).trim();
-  if (beforeCliXml && clixml) {
-    return `${beforeCliXml}\n\nPowerShell CLIXML:\n${clixml}`;
-  }
-  return beforeCliXml || clixml || undefined;
-}
-
-function collectStructuredToolOutput(rawOutput: object): string | undefined {
-  const candidates = [
-    ["formatted_output", "formatted output"],
-    ["aggregated_output", "aggregated output"],
-    ["output", "raw output"],
-  ] as const;
-
-  const segments: Array<{ label: string; value: string }> = [];
-  for (const [key, label] of candidates) {
-    const value = Reflect.get(rawOutput, key);
-    if (typeof value !== "string") {
-      continue;
-    }
-    const sanitized = sanitizeToolOutput(value);
-    if (!sanitized || segments.some((segment) => segment.value === sanitized)) {
-      continue;
-    }
-    segments.push({ label, value: sanitized });
-  }
-
-  if (segments.length === 0) {
-    return undefined;
-  }
-  if (segments.length === 1) {
-    return segments[0].value;
-  }
-
-  return segments
-    .map((segment) => `=== ${segment.label} ===\n${segment.value}`)
-    .join("\n\n");
-}
-
-function getToolRelatedPaths(update: ToolCall | ToolCallUpdate): string[] {
-  const workspaceRoot = currentWorkspaceRoot();
-  const paths = new Set<string>();
-
-  if (!workspaceRoot) {
-    for (const location of update.locations ?? []) {
-      paths.add(location.path);
-    }
-    for (const content of update.content ?? []) {
-      if (content.type === "diff") {
-        paths.add(content.path);
-      }
-    }
-    return Array.from(paths.values());
-  }
-
-  for (const location of update.locations ?? []) {
-    paths.add(getDisplayPath(location.path, workspaceRoot));
-  }
-
-  for (const content of update.content ?? []) {
-    if (content.type === "diff") {
-      paths.add(getDisplayPath(content.path, workspaceRoot));
-    }
-  }
-
-  return Array.from(paths.values());
-}
-
-function getDisplayPath(rawPath: string, workspaceRoot: vscode.Uri): string {
-  try {
-    return vscode.workspace.asRelativePath(resolveUri(rawPath, workspaceRoot), false);
-  } catch {
-    return rawPath;
-  }
-}
-
-function formatNumber(value: number): string {
-  return new Intl.NumberFormat("en-US").format(value);
-}
-
 type ToolCommandPayload = {
   command?: unknown;
+  filePath?: unknown;
+  path?: unknown;
 };
 
 function getCommandLine(raw: unknown): string | undefined {
@@ -312,6 +462,10 @@ function getCommandLine(raw: unknown): string | undefined {
     return undefined;
   }
   const { command } = raw as ToolCommandPayload;
+  if (typeof command === "string") {
+    const normalized = command.trim();
+    return normalized || undefined;
+  }
   if (!Array.isArray(command)) {
     return undefined;
   }
@@ -320,6 +474,78 @@ function getCommandLine(raw: unknown): string | undefined {
     return undefined;
   }
   return parts.join(" ");
+}
+
+function getPathInput(raw: unknown): string | undefined {
+  if (!raw || typeof raw !== "object") {
+    return undefined;
+  }
+
+  const { filePath, path } = raw as ToolCommandPayload;
+  const candidate = typeof filePath === "string" ? filePath : path;
+  if (typeof candidate !== "string") {
+    return undefined;
+  }
+
+  const normalized = candidate.trim();
+  return normalized || undefined;
+}
+
+function getToolInputText(raw: unknown): string | undefined {
+  return getCommandLine(raw) ?? getPathInput(raw);
+}
+
+function getToolOutputPreview(raw: unknown): string | undefined {
+  if (!raw || typeof raw !== "object") {
+    return undefined;
+  }
+
+  const metadata = (raw as { metadata?: unknown }).metadata;
+  if (!metadata || typeof metadata !== "object") {
+    return undefined;
+  }
+
+  const preview = (metadata as { preview?: unknown }).preview;
+  if (typeof preview !== "string") {
+    return undefined;
+  }
+
+  const normalized = preview.trim();
+  return normalized || undefined;
+}
+
+function isMarkdownPath(value: string | undefined): boolean {
+  return typeof value === "string" && /\.(?:md|markdown|mdx)$/i.test(value);
+}
+
+function getPreferredToolOutputData(
+  toolCallUpdate: ToolCallUpdate | ToolCall,
+  info: ToolInfo,
+): ToolOutputData | undefined {
+  const preview = getToolOutputPreview(toolCallUpdate.rawOutput);
+  if (preview) {
+    const pathInput = getPathInput(toolCallUpdate.rawInput) ?? info.input;
+    if (isMarkdownPath(pathInput) || looksLikeMarkdownContent(preview)) {
+      return {
+        text: normalizeMarkdownPreview(preview),
+        mimeType: "text/markdown",
+      };
+    }
+
+    return {
+      text: formatToolOutputValue(preview),
+      mimeType: "text/plain",
+    };
+  }
+
+  if (!info.output) {
+    return undefined;
+  }
+
+  return {
+    text: info.output,
+    mimeType: "text/plain",
+  };
 }
 
 export function getSubAgentInvocationId(
@@ -338,9 +564,12 @@ export function getSubAgentInvocationId(
 export function isTerminalToolInvocation(
   toolCallUpdate: ToolCallUpdate | ToolCall,
   info: ToolInfo,
+  fallbackKind?: ToolInfo["kind"],
 ): boolean {
+  const effectiveKind =
+    info.kind === "terminal" ? (fallbackKind ?? info.kind) : info.kind;
   return (
-    info.kind === "execute" ||
+    effectiveKind === "execute" ||
     Boolean(getCommandLine(toolCallUpdate.rawInput)) ||
     Boolean(getCommandLine(toolCallUpdate.rawOutput))
   );
@@ -349,11 +578,13 @@ export function isTerminalToolInvocation(
 export function buildTerminalToolInvocationData(
   toolCallUpdate: ToolCallUpdate | ToolCall,
   info: ToolInfo,
+  fallbackCommandLine?: string,
 ): vscode.ChatTerminalToolInvocationData | undefined {
   const commandLine =
     getCommandLine(toolCallUpdate.rawInput) ||
     getCommandLine(toolCallUpdate.rawOutput) ||
-    info.input;
+    info.input ||
+    fallbackCommandLine;
   if (!commandLine) {
     return undefined;
   }
@@ -366,7 +597,10 @@ export function buildTerminalToolInvocationData(
   };
 
   if (info.output) {
-    data.output = { text: info.output };
+    const normalizedOutput = normalizeTerminalOutputText(info.output);
+    if (normalizedOutput) {
+      data.output = { text: normalizedOutput };
+    }
   }
 
   if (
@@ -376,9 +610,16 @@ export function buildTerminalToolInvocationData(
     const rawOutput = toolCallUpdate.rawOutput as {
       exitCode?: unknown;
       duration?: unknown;
+      output?: unknown;
     };
+    const wrappedResult =
+      typeof rawOutput.output === "string"
+        ? parseWrappedCommandResult(rawOutput.output)
+        : undefined;
     const exitCode =
-      typeof rawOutput.exitCode === "number" ? rawOutput.exitCode : undefined;
+      typeof rawOutput.exitCode === "number"
+        ? rawOutput.exitCode
+        : wrappedResult?.exitCode;
     const duration =
       typeof rawOutput.duration === "number" ? rawOutput.duration : undefined;
     if (exitCode !== undefined || duration !== undefined) {
@@ -390,25 +631,94 @@ export function buildTerminalToolInvocationData(
 }
 
 export function buildMcpToolInvocationData(
-  info: ToolInfo,
+  toolCallUpdateOrInfo: ToolCallUpdate | ToolCall | ToolInfo,
+  maybeInfo?: ToolInfo,
 ): vscode.ChatMcpToolInvocationData | undefined {
-  if (!info.input && !info.output) {
+  const toolCallUpdate = maybeInfo
+    ? (toolCallUpdateOrInfo as ToolCallUpdate | ToolCall)
+    : undefined;
+  const info = maybeInfo ?? (toolCallUpdateOrInfo as ToolInfo);
+  const outputData = toolCallUpdate
+    ? getPreferredToolOutputData(toolCallUpdate, info)
+    : info.output
+      ? { text: info.output, mimeType: "text/plain" }
+      : undefined;
+
+  if (!info.input && !outputData) {
     return undefined;
   }
 
   const output: vscode.McpToolInvocationContentData[] = [];
-  if (info.output) {
+  if (outputData) {
     const encoder = new TextEncoder();
     output.push({
-      data: encoder.encode(info.output),
-      mimeType: "text/plain",
+      data: encoder.encode(outputData.text),
+      mimeType: outputData.mimeType,
     });
   }
 
   return {
-    input: info.input ?? "",
+    input: info.input ?? getPathInput(toolCallUpdate?.rawInput) ?? "",
     output,
   };
+}
+
+export function getToolCompletionMessage(
+  toolCallUpdate: ToolCallUpdate | ToolCall,
+  info: ToolInfo,
+  fallbackKind?: ToolInfo["kind"],
+  fallbackCommandLine?: string,
+): string | undefined {
+  if (isTerminalToolInvocation(toolCallUpdate, info, fallbackKind)) {
+    return (
+      getCommandLine(toolCallUpdate.rawInput) ??
+      getCommandLine(toolCallUpdate.rawOutput) ??
+      info.input ??
+      fallbackCommandLine
+    );
+  }
+
+  const output = info.output?.trim();
+  if (!output || output.includes("\n") || output.length > 120) {
+    return undefined;
+  }
+
+  return output;
+}
+
+export function formatCurrentModeUpdateSummary(currentModeId: string): string {
+  return `Mode changed: ${currentModeId}`;
+}
+
+export function formatToolLifecycleSummary(
+  phase: "started" | "completed" | "failed",
+  toolCallUpdate: ToolCall | ToolCallUpdate,
+  info: ToolInfo,
+): string {
+  return [
+    `Tool ${phase}: id=${toolCallUpdate.toolCallId}`,
+    `name=${info.name || "Tool"}`,
+    `kind=${info.kind}`,
+  ].join("; ");
+}
+
+export function formatUsageUpdateSummary(args: {
+  used: number;
+  size: number;
+  cost?: { amount: number; currency: string };
+}): string {
+  const numberFormat = new Intl.NumberFormat("en-US");
+  const percentFormat = new Intl.NumberFormat("en-US", {
+    minimumFractionDigits: 1,
+    maximumFractionDigits: 1,
+  });
+  const usageSummary = `${numberFormat.format(args.used)} / ${numberFormat.format(args.size)} tokens (${percentFormat.format(args.size > 0 ? (args.used / args.size) * 100 : 0)}%)`;
+
+  if (!args.cost) {
+    return usageSummary;
+  }
+
+  return `${usageSummary} — Cost: ${args.cost.currency} ${args.cost.amount}`;
 }
 
 function getQuestionPayload(raw: unknown): ToolQuestionPayload[] | undefined {
@@ -540,17 +850,33 @@ export function buildDiffMarkdown(
   return diffMarkdown;
 }
 
+function normalizeDiffText(text: string): string {
+  return text.replace(/\r\n?/g, "\n");
+}
+
+function splitDiffLines(text: string): string[] {
+  if (!text.length) {
+    return [];
+  }
+
+  const lines = text.split("\n");
+  if (text.endsWith("\n")) {
+    lines.pop();
+  }
+
+  return lines;
+}
+
 export function toInlineDiff(oldText: string, newText: string): string {
-  const normalize = (text: string): string => text.replace(/\r\n?/g, "\n");
-  const original = normalize(oldText);
-  const updated = normalize(newText);
+  const original = normalizeDiffText(oldText);
+  const updated = normalizeDiffText(newText);
 
   if (original === updated) {
     return "";
   }
 
-  const oldLines = original.split("\n");
-  const newLines = updated.split("\n");
+  const oldLines = splitDiffLines(original);
+  const newLines = splitDiffLines(updated);
   const m = oldLines.length;
   const n = newLines.length;
 
@@ -701,14 +1027,13 @@ export function buildDiffStats(
   oldText: string | undefined,
   newText: string | undefined,
 ): { added: number; removed: number } {
-  const normalize = (text: string): string => text.replace(/\r\n?/g, "\n");
-  const original = normalize(oldText ?? "");
-  const updated = normalize(newText ?? "");
+  const original = normalizeDiffText(oldText ?? "");
+  const updated = normalizeDiffText(newText ?? "");
   if (original === updated) {
     return { added: 0, removed: 0 };
   }
-  const oldLines = original.split("\n");
-  const newLines = updated.split("\n");
+  const oldLines = splitDiffLines(original);
+  const newLines = splitDiffLines(updated);
   const m = oldLines.length;
   const n = newLines.length;
   const lcs = Array.from({ length: m + 1 }, () =>

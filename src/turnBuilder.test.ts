@@ -268,6 +268,337 @@ suite("turnBuilder", () => {
     assert.match(end.value, /^Tool completed: id=call-1;/);
   });
 
+  test("replays execute-command tool calls with the original command line and terminal metadata", () => {
+    const builder = new turnBuilderModule.TurnBuilder("acp", {
+      debug: () => undefined,
+    } as never);
+
+    builder.processNotification({
+      sessionId: "session-4",
+      update: {
+        sessionUpdate: "tool_call",
+        toolCallId: "call-exec-1",
+        title: "",
+        kind: "execute",
+        rawInput: {
+          command: ["npm", "run", "compile"],
+        },
+        content: [],
+      },
+    } as never);
+    builder.processNotification({
+      sessionId: "session-4",
+      update: {
+        sessionUpdate: "tool_call_update",
+        toolCallId: "call-exec-1",
+        status: "completed",
+        rawOutput: {
+          output: "done",
+          exitCode: 0,
+          duration: 123,
+        },
+      },
+    } as never);
+
+    const turns = builder.getTurns();
+    const response = turns[0] as unknown as MockChatResponseTurn2;
+    const invocation = response.parts[1] as MockChatToolInvocationPart;
+
+    assert.equal(invocation.invocationMessage, "npm run compile");
+    assert.deepEqual(invocation.toolSpecificData, {
+      language: "shell",
+      commandLine: {
+        original: "npm run compile",
+      },
+      output: {
+        text: "done",
+      },
+      state: {
+        exitCode: 0,
+        duration: 123,
+      },
+    });
+    assert.equal(invocation.presentation, undefined);
+  });
+
+  test("replays ACP tagged tool output without leaking raw tags", () => {
+    const builder = new turnBuilderModule.TurnBuilder("acp", {
+      debug: () => undefined,
+    } as never);
+
+    builder.processNotification({
+      sessionId: "session-5",
+      update: {
+        sessionUpdate: "tool_call",
+        toolCallId: "call-review-1",
+        title: "Reviewed 6 files",
+        kind: "other",
+        status: "pending",
+      },
+    } as never);
+    builder.processNotification({
+      sessionId: "session-5",
+      update: {
+        sessionUpdate: "tool_call_update",
+        toolCallId: "call-review-1",
+        title: "Reviewed 6 files",
+        kind: "other",
+        status: "completed",
+        rawOutput: {
+          output: [
+            "<path>G:\\qwen3.6-windows-server\\docs</path>",
+            "<type>directory</type>",
+            "<entries>AGENT_INSTALL_PROMPT.md BLACKWELL.md README.md (24 entries)</entries>",
+          ].join("\n"),
+        },
+      },
+    } as never);
+
+    const turns = builder.getTurns();
+    const response = turns[0] as unknown as MockChatResponseTurn2;
+    const invocation = response.parts[1] as MockChatToolInvocationPart;
+    const outputText = new TextDecoder().decode(
+      (invocation.toolSpecificData as { output?: Array<{ data: Uint8Array }> })
+        .output?.[0]?.data ?? new Uint8Array(),
+    );
+
+    assert.equal(invocation.name, "Reviewed 6 files");
+    assert.equal(invocation.pastTenseMessage, undefined);
+    assert.doesNotMatch(outputText, /<path>|<type>|<entries>/);
+    assert.match(outputText, /Path: G:\\qwen3\.6-windows-server\\docs/);
+    assert.match(outputText, /Entries:\nAGENT_INSTALL_PROMPT\.md/);
+  });
+
+  test("replays OpenCode execute tools with string commands and sanitized output", () => {
+    const builder = new turnBuilderModule.TurnBuilder("acp", {
+      debug: () => undefined,
+    } as never);
+
+    builder.processNotification({
+      sessionId: "session-6",
+      update: {
+        sessionUpdate: "tool_call",
+        toolCallId: "call-exec-opencode-1",
+        title: "bash",
+        kind: "execute",
+        rawInput: {},
+        status: "pending",
+      },
+    } as never);
+    builder.processNotification({
+      sessionId: "session-6",
+      update: {
+        sessionUpdate: "tool_call_update",
+        toolCallId: "call-exec-opencode-1",
+        title: "Print ANSI escape code example",
+        kind: "execute",
+        status: "completed",
+        rawInput: {
+          command: 'Write-Host "ESC[7mprocessorESC[0m Free"',
+          description: "Print ANSI escape code example",
+        },
+        rawOutput: {
+          output: "ESC[7mprocessorESC[0m Free\r\n",
+        },
+      },
+    } as never);
+
+    const turns = builder.getTurns();
+    const response = turns[0] as unknown as MockChatResponseTurn2;
+    const invocation = response.parts[1] as MockChatToolInvocationPart;
+
+    assert.equal(
+      invocation.invocationMessage,
+      'Write-Host "ESC[7mprocessorESC[0m Free"',
+    );
+    assert.equal(
+      invocation.pastTenseMessage,
+      'Write-Host "ESC[7mprocessorESC[0m Free"',
+    );
+    assert.deepEqual(invocation.toolSpecificData, {
+      language: "shell",
+      commandLine: {
+        original: 'Write-Host "ESC[7mprocessorESC[0m Free"',
+      },
+      output: {
+        text: "processor Free",
+      },
+    });
+  });
+
+  test("replays OpenCode markdown read previews as markdown tool output", () => {
+    const builder = new turnBuilderModule.TurnBuilder("acp", {
+      debug: () => undefined,
+    } as never);
+
+    builder.processNotification({
+      sessionId: "session-7",
+      update: {
+        sessionUpdate: "tool_call",
+        toolCallId: "call-read-opencode-1",
+        title: "read",
+        kind: "read",
+        status: "pending",
+      },
+    } as never);
+    builder.processNotification({
+      sessionId: "session-7",
+      update: {
+        sessionUpdate: "tool_call_update",
+        toolCallId: "call-read-opencode-1",
+        title: "C:\\temp\\rendering-fixture.md",
+        kind: "read",
+        status: "completed",
+        rawInput: {
+          filePath: "C:\\temp\\rendering-fixture.md",
+        },
+        rawOutput: {
+          output: [
+            "<path>C:\\temp\\rendering-fixture.md</path>",
+            "<type>file</type>",
+            "<content>",
+            "1: {% code %}",
+            "2: benchmark snippet",
+            "3: {% endcode %}",
+            "4:",
+            "5: ## Benchmarks",
+            "6:",
+            '7: <figure><img src="/files/benchmark.png" alt="Benchmarks"><figcaption>MiniMax-M2.7 benchmark results</figcaption></figure>',
+            "8:",
+            "9: - item 1",
+            "10: - item 2",
+            "</content>",
+          ].join("\n"),
+          metadata: {
+            preview: [
+              "{% code %}",
+              "benchmark snippet",
+              "{% endcode %}",
+              "",
+              "## Benchmarks",
+              "",
+              '<figure><img src="/files/benchmark.png" alt="Benchmarks"><figcaption>MiniMax-M2.7 benchmark results</figcaption></figure>',
+              "",
+              "- item 1",
+              "- item 2",
+            ].join("\n"),
+            truncated: false,
+            loaded: [],
+          },
+        },
+      },
+    } as never);
+
+    const turns = builder.getTurns();
+    const response = turns[0] as unknown as MockChatResponseTurn2;
+    const invocation = response.parts[1] as MockChatToolInvocationPart;
+    const toolData = invocation.toolSpecificData as {
+      input: string;
+      output: Array<{ mimeType: string; data: Uint8Array }>;
+    };
+    const rendered = new TextDecoder().decode(toolData.output[0].data);
+
+    assert.equal(invocation.pastTenseMessage, undefined);
+    assert.equal(toolData.input, "C:\\temp\\rendering-fixture.md");
+    assert.equal(toolData.output[0].mimeType, "text/markdown");
+    assert.doesNotMatch(rendered, /{%\s*endcode\s*%}|<figure>|<figcaption>/);
+    assert.match(rendered, /```/);
+    assert.match(rendered, /## Benchmarks/);
+    assert.match(rendered, /> Figure: MiniMax-M2\.7 benchmark results/);
+  });
+
+  test("replays Auggie wrapped execute output without wrapper tags or CLIXML noise", () => {
+    const builder = new turnBuilderModule.TurnBuilder("acp", {
+      debug: () => undefined,
+    } as never);
+
+    builder.processNotification({
+      sessionId: "session-8",
+      update: {
+        sessionUpdate: "tool_call",
+        toolCallId: "call-auggie-1",
+        title: "Run `Get-Content -Raw 'C:\\temp\\rendering-fixture.md'`",
+        kind: "execute",
+        rawInput: {
+          command: "Get-Content -Raw 'C:\\temp\\rendering-fixture.md'",
+        },
+        status: "pending",
+      },
+    } as never);
+    builder.processNotification({
+      sessionId: "session-8",
+      update: {
+        sessionUpdate: "tool_call_update",
+        toolCallId: "call-auggie-1",
+        title: "Run `Get-Content -Raw 'C:\\temp\\rendering-fixture.md'`",
+        kind: "execute",
+        status: "completed",
+        rawInput: {
+          command: "Get-Content -Raw 'C:\\temp\\rendering-fixture.md'",
+        },
+        rawOutput: {
+          output: [
+            "Here are the results from executing the command.",
+            "<return-code>",
+            "0",
+            "</return-code>",
+            "<output>",
+            "#< CLIXML",
+            "{% code %}",
+            "benchmark snippet",
+            "{% endcode %}",
+            "",
+            "## Benchmarks",
+            "",
+            '<figure><img src="/files/benchmark.png" alt="Benchmarks"><figcaption>MiniMax-M2.7 benchmark results</figcaption></figure>',
+            "",
+            "- item 1",
+            "- item 2",
+            '<Objs Version="1.1.0.1" xmlns="http://schemas.microsoft.com/powershell/2004/04"></Objs>',
+            "</output>",
+          ].join("\n"),
+        },
+      },
+    } as never);
+
+    const turns = builder.getTurns();
+    const response = turns[0] as unknown as MockChatResponseTurn2;
+    const invocation = response.parts[1] as MockChatToolInvocationPart;
+
+    assert.equal(
+      invocation.invocationMessage,
+      "Get-Content -Raw 'C:\\temp\\rendering-fixture.md'",
+    );
+    assert.equal(
+      invocation.pastTenseMessage,
+      "Get-Content -Raw 'C:\\temp\\rendering-fixture.md'",
+    );
+    assert.deepEqual(invocation.toolSpecificData, {
+      language: "shell",
+      commandLine: {
+        original: "Get-Content -Raw 'C:\\temp\\rendering-fixture.md'",
+      },
+      output: {
+        text: [
+          "```",
+          "benchmark snippet",
+          "```",
+          "## Benchmarks",
+          "",
+          "> Figure: MiniMax-M2.7 benchmark results",
+          "> Image source: /files/benchmark.png",
+          "",
+          "- item 1",
+          "- item 2",
+        ].join("\n"),
+      },
+      state: {
+        exitCode: 0,
+        duration: undefined,
+      },
+    });
+  });
+
   test("replays mode and usage updates as progress parts", () => {
     const builder = new turnBuilderModule.TurnBuilder("acp", {
       debug: () => undefined,

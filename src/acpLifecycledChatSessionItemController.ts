@@ -49,7 +49,10 @@ class LifecycledChatSessionItemController extends DisposableBase {
     );
 
     this.controller.newChatSessionItemHandler = async (context, _token) => {
-      const sessionResource = context.request.sessionResource;
+      const sessionResource = this.getFreshSessionResource(
+        context.request.sessionResource,
+        context.request.id,
+      );
       if (sessionResource) {
         try {
           const { session } = await this.sessionManager.createOrGet(sessionResource);
@@ -172,6 +175,30 @@ class LifecycledChatSessionItemController extends DisposableBase {
           }
         }
       }),
+    );
+  }
+
+  private getFreshSessionResource(
+    providedResource: vscode.Uri | undefined,
+    requestId: string,
+  ): vscode.Uri | undefined {
+    if (!providedResource) {
+      return undefined;
+    }
+
+    if (
+      providedResource.scheme === `acp-${this.agentId}` &&
+      providedResource.path.startsWith("/untitled-")
+    ) {
+      return providedResource;
+    }
+
+    this.logger.debug(
+      `newChatSessionItemHandler: ignoring stale session resource ${providedResource.toString()} and creating a fresh untitled resource for request ${requestId}`,
+    );
+
+    return vscodeApi.Uri.parse(
+      `acp-${this.agentId}:/untitled-${encodeURIComponent(requestId)}`,
     );
   }
 
