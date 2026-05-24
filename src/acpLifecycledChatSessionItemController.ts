@@ -55,7 +55,8 @@ class LifecycledChatSessionItemController extends DisposableBase {
       );
       if (sessionResource) {
         try {
-          const { session } = await this.sessionManager.createOrGet(sessionResource);
+          const { session } =
+            await this.sessionManager.createOrGet(sessionResource);
           const uri = this.sessionManager.createSessionUri(session);
           const item = this.controller.createChatSessionItem(
             uri,

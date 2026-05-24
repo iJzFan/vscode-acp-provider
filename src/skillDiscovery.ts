@@ -23,9 +23,10 @@ function expandPath(p: string): string {
   return resolved;
 }
 
-function parseFrontmatter(
-  content: string,
-): { name?: string; description?: string } {
+function parseFrontmatter(content: string): {
+  name?: string;
+  description?: string;
+} {
   const match = content.match(FRONTMATTER_RE);
   if (!match) {
     return {};
@@ -38,9 +39,7 @@ function parseFrontmatter(
   return { name, description };
 }
 
-export function scanSkillDirectories(
-  paths: readonly string[],
-): ScannedSkill[] {
+export function scanSkillDirectories(paths: readonly string[]): ScannedSkill[] {
   if (!paths.length) {
     return [];
   }

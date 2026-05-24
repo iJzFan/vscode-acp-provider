@@ -48,7 +48,8 @@ setup(() => {
   };
 
   clearModules();
-  externalEditTracker = require("./externalEditTracker") as ExternalEditTrackerModule;
+  externalEditTracker =
+    require("./externalEditTracker") as ExternalEditTrackerModule;
   externalEditTracker.clearExternalEditsForTesting();
 });
 

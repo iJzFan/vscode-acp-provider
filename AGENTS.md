@@ -5,6 +5,7 @@
 - ALWAYS USE subagents for code explorations when they are AVAILABLE.
 
 ### When to prefer codegraph over native search
+
 Do use `mcp_codegraph_*` for **structural** questions — what calls what, what would break, where is X defined, what is X's signature. Use native grep/read only for **literal text** queries (string contents, comments, log messages) or after you already have a specific file open.
 
 ## Build And Release

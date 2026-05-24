@@ -13,8 +13,7 @@ interface ImportedMcpServerMetadata {
   readonly warnings?: readonly string[];
 }
 
-export interface AcpStdioMcpServerConfiguration
-  extends ImportedMcpServerMetadata {
+export interface AcpStdioMcpServerConfiguration extends ImportedMcpServerMetadata {
   readonly type: "stdio";
   readonly name: string;
   readonly command: string;
@@ -22,8 +21,7 @@ export interface AcpStdioMcpServerConfiguration
   readonly env?: Record<string, string>;
 }
 
-export interface AcpHttpMcpServerConfiguration
-  extends ImportedMcpServerMetadata {
+export interface AcpHttpMcpServerConfiguration extends ImportedMcpServerMetadata {
   readonly type: "http";
   readonly name: string;
   readonly url: string;
@@ -69,7 +67,11 @@ export interface AcpAgentConfigurationEntry {
   readonly defaultThinkingEffort?: DefaultThinkingEffort;
 }
 
-export const ThinkingEffortModes = ["think", "megathink", "ultrathink"] as const;
+export const ThinkingEffortModes = [
+  "think",
+  "megathink",
+  "ultrathink",
+] as const;
 export const DefaultThinkingEffortValues = [
   "off",
   "think",
@@ -78,7 +80,8 @@ export const DefaultThinkingEffortValues = [
 ] as const;
 
 export type ThinkConfig = (typeof ThinkingEffortModes)[number];
-export type DefaultThinkingEffort = (typeof DefaultThinkingEffortValues)[number];
+export type DefaultThinkingEffort =
+  (typeof DefaultThinkingEffortValues)[number];
 
 export interface ThinkState {
   enabled: boolean;

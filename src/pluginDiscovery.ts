@@ -2,10 +2,7 @@
 import * as os from "node:os";
 import * as path from "node:path";
 import * as vscode from "vscode";
-import {
-  currentWorkspaceRoot,
-  extractReadableErrorMessage,
-} from "./types";
+import { currentWorkspaceRoot, extractReadableErrorMessage } from "./types";
 import { fileExists, isRecord } from "./mcpConfigImporter";
 
 type PluginSourceKind = "chatSetting" | "copilotCli" | "vscodeInstalled";
@@ -81,9 +78,12 @@ export async function discoverPlugins(
 
   const hints = await loadWorkspacePluginHints(logger);
   if (hints.enabledPluginIds.length) {
-    const discoveredNames = new Set(plugins.map((plugin) => plugin.manifest.name));
+    const discoveredNames = new Set(
+      plugins.map((plugin) => plugin.manifest.name),
+    );
     const missing = hints.enabledPluginIds.filter(
-      (pluginId) => !discoveredNames.has(normalizeRecommendedPluginName(pluginId)),
+      (pluginId) =>
+        !discoveredNames.has(normalizeRecommendedPluginName(pluginId)),
     );
     if (missing.length) {
       logger.info(
@@ -335,7 +335,10 @@ function getUserDataRoot(
   return undefined;
 }
 
-function joinRelativePath(rootUri: vscode.Uri, relativePath: string): vscode.Uri {
+function joinRelativePath(
+  rootUri: vscode.Uri,
+  relativePath: string,
+): vscode.Uri {
   const segments = relativePath.split(/[\\/]+/).filter(Boolean);
   return vscode.Uri.joinPath(rootUri, ...segments);
 }
@@ -372,7 +375,9 @@ async function loadWorkspacePluginHints(
       sources.push(hintFile.fsPath);
 
       if (isRecord(parsed.enabledPlugins)) {
-        for (const [pluginId, enabled] of Object.entries(parsed.enabledPlugins)) {
+        for (const [pluginId, enabled] of Object.entries(
+          parsed.enabledPlugins,
+        )) {
           if (enabled) {
             enabledPluginIds.add(pluginId);
           }

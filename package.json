@@ -2,10 +2,15 @@
   "name": "vscode-acp-client",
   "displayName": "VS Code ACP Client",
   "description": "Chat sessions backed by Agent Client Protocol (ACP) agents and CLIs",
-  "version": "0.6.0",
+  "version": "0.6.1",
   "publisher": "org-gap",
   "repository": {
+    "type": "git",
     "url": "https://github.com/gayanper/vscode-acp-provider.git"
+  },
+  "homepage": "https://github.com/gayanper/vscode-acp-provider#readme",
+  "bugs": {
+    "url": "https://github.com/gayanper/vscode-acp-provider/issues"
   },
   "engines": {
     "vscode": "^1.120.0"
@@ -400,8 +405,8 @@
     "prettier": "3.7.4",
     "typescript": "^5.9.3"
   },
-  "author": "",
-  "license": "MIT",
+  "author": "VS Code ACP Client contributors",
+  "license": "Apache-2.0",
   "dependencies": {
     "@agentclientprotocol/sdk": "0.14.1"
   }

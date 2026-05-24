@@ -101,7 +101,9 @@ export function buildAvailableCommandLogSummary(
     : visibleCommands.join(", ");
 }
 
-export function formatCommandSourceBadge(source: SurfacedCommandSource): string {
+export function formatCommandSourceBadge(
+  source: SurfacedCommandSource,
+): string {
   return source === "manual" ? "[manual]" : "[ACP]";
 }
 

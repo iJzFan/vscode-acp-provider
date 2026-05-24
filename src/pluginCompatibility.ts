@@ -70,12 +70,24 @@ async function resolvePluginMcpServers(
     }
 
     if (isRecord(inlineSpec)) {
-      return parsePluginMcpServers(plugin, inlineSpec, logger, plugin.manifestUri);
+      return parsePluginMcpServers(
+        plugin,
+        inlineSpec,
+        logger,
+        plugin.manifestUri,
+      );
     }
 
-    const defaultConfigUri = joinRelativePath(plugin.rootUri, DEFAULT_PLUGIN_MCP_CONFIG);
+    const defaultConfigUri = joinRelativePath(
+      plugin.rootUri,
+      DEFAULT_PLUGIN_MCP_CONFIG,
+    );
     if (await fileExists(defaultConfigUri)) {
-      return await loadPluginMcpServersFromFile(plugin, defaultConfigUri, logger);
+      return await loadPluginMcpServersFromFile(
+        plugin,
+        defaultConfigUri,
+        logger,
+      );
     }
   } catch (error) {
     logger.warn(
@@ -180,10 +192,14 @@ function parsePluginMcpServer(
 
     const warnings: string[] = [];
     if (typeof config.cwd === "string") {
-      warnings.push("cwd is ignored because ACP MCP stdio bootstrap does not support it yet");
+      warnings.push(
+        "cwd is ignored because ACP MCP stdio bootstrap does not support it yet",
+      );
     }
     if (typeof config.envFile === "string") {
-      warnings.push("envFile is ignored because ACP MCP stdio bootstrap does not support it yet");
+      warnings.push(
+        "envFile is ignored because ACP MCP stdio bootstrap does not support it yet",
+      );
     }
     if (warnings.length) {
       logger.info(
@@ -249,7 +265,10 @@ function expandStringRecord(
   }
 
   return Object.fromEntries(
-    Object.entries(record).map(([key, entry]) => [key, expandPluginTokens(plugin, entry)]),
+    Object.entries(record).map(([key, entry]) => [
+      key,
+      expandPluginTokens(plugin, entry),
+    ]),
   );
 }
 
@@ -275,7 +294,10 @@ function expandPluginTokens(plugin: DiscoveredPlugin, value: string): string {
     .replace(/\$\{PLUGIN_ROOT\}/g, plugin.rootUri.fsPath);
 }
 
-function joinRelativePath(rootUri: vscode.Uri, relativePath: string): vscode.Uri {
+function joinRelativePath(
+  rootUri: vscode.Uri,
+  relativePath: string,
+): vscode.Uri {
   const segments = relativePath.split(/[\\/]+/).filter(Boolean);
   return vscode.Uri.joinPath(rootUri, ...segments);
 }

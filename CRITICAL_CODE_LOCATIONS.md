@@ -3,6 +3,7 @@
 ## File: `src/chatIdentifiers.ts`
 
 ### Function: `decodeVscodeResource()` [Lines 23-46]
+
 **Suspicious behavior:** Normalizes all untitled URIs to same sessionId
 
 ```typescript
@@ -15,7 +16,7 @@ export function decodeVscodeResource(resource: vscode.Uri): {
   const isUntitled = sessionId.startsWith("untitled-");
   if (isUntitled) {
     // ⚠️ ALL "untitled-*" URIs normalize to "untitled"
-    sessionId = "untitled";  // <-- THE PROBLEM
+    sessionId = "untitled"; // <-- THE PROBLEM
   }
   return { isUntitled, sessionId };
 }
@@ -28,6 +29,7 @@ export function decodeVscodeResource(resource: vscode.Uri): {
 ## File: `src/acpSessionManager.ts`
 
 ### Function: `getActive()` [Lines 517-520]
+
 **Uses normalized sessionId to lookup:**
 
 ```typescript
@@ -39,6 +41,7 @@ getActive(vscodeResource: vscode.Uri): Session | undefined {
 ```
 
 ### Function: `createOrGet()` [Lines 325-507]
+
 **For untitled sessions [Lines 332-402]:**
 
 ```typescript
@@ -46,7 +49,7 @@ if (decodedResource.isUntitled) {
   // ⚠️ THIS IS THE BUG [Lines 333-336]
   if (this.activeSessions.has(decodedResource.sessionId)) {
     return {
-      session: this.activeSessions.get(decodedResource.sessionId)!
+      session: this.activeSessions.get(decodedResource.sessionId)!,
     };
   }
   // ... create new session
@@ -55,6 +58,7 @@ if (decodedResource.isUntitled) {
 ```
 
 **Problem:**
+
 - Line 333: Checks if `activeSessions["untitled"]` exists
 - If yes, returns it **without checking if it's the same VS Code chat item**
 - No verification that resource URI matches
@@ -65,29 +69,31 @@ if (decodedResource.isUntitled) {
 ## File: `src/acpChatParticipant.ts`
 
 ### Function: `handleRequest()` [Lines 247-277]
+
 **Entry point for user message:**
 
 ```typescript
 private async handleRequest(...): Promise<void> {
   // Line 253-254: Extract sessionResource from VS Code context
-  const sessionResource = 
+  const sessionResource =
     context.chatSessionContext?.chatSessionItem.resource;
-  
+
   // Line 263: Look up in activeSessions
   let session = this.sessionManager.getActive(sessionResource);
-  
+
   if (!session) {
     // Line 266: If not found, create new one
     const result = await this.sessionManager.createOrGet(sessionResource);
     session = result.session;
   }
-  
+
   // ⚠️ Uses this session (could be OLD if bug present)
   await session.client.prompt(sessionId, promptBlocks);
 }
 ```
 
 **Message routing:**
+
 1. Extracts resource from chat context
 2. Looks up in activeSessions (uses normalized key)
 3. If found, uses it (BUG: might be wrong session)
@@ -98,6 +104,7 @@ private async handleRequest(...): Promise<void> {
 ## File: `src/acpLifecycledChatSessionItemController.ts`
 
 ### Function: `newChatSessionItemHandler` [Lines 51-96]
+
 **Creates new chat session items:**
 
 ```typescript
@@ -123,6 +130,7 @@ this.controller.newChatSessionItemHandler = async (context, _token) => {
 ## File: `src/acpChatSessionContentProvider.ts`
 
 ### Function: `provideChatSessionContent()` [Lines 57-84]
+
 **Called when VS Code loads/restores chat session:**
 
 ```typescript
@@ -133,7 +141,7 @@ async provideChatSessionContent(
   // ⚠️ Calls createOrGet which uses normalized sessionId
   const response = await this.sessionManager.createOrGet(resource);
   const { session: acpSession, history } = response;
-  
+
   // Uses this session object for history and handler
   return { history: history || [], requestHandler: ... };
 }
@@ -176,6 +184,7 @@ activeSessions Map:
 ```
 
 Session object's vscodeResource was updated (if line 320 of `createSessionUri()` fired), but:
+
 - It's still the OLD Session object
 - It's still has OLD acp_id
 - It's now mapped to WRONG vscodeResource

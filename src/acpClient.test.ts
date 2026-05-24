@@ -127,9 +127,7 @@ function createMockDocument(
 }
 
 function clearAcpClientModules(): void {
-  for (const moduleId of [
-    "./fileWriteCoordinator",
-  ]) {
+  for (const moduleId of ["./fileWriteCoordinator"]) {
     try {
       delete require.cache[require.resolve(moduleId)];
     } catch {
@@ -156,7 +154,8 @@ setup(() => {
 
   clearAcpClientModules();
 
-  const coordinator = require("./fileWriteCoordinator") as FileWriteCoordinatorModule;
+  const coordinator =
+    require("./fileWriteCoordinator") as FileWriteCoordinatorModule;
   coordinator.setWriteCoordinatorVscodeForTesting({
     Uri: MockUri,
     workspace: {
@@ -185,14 +184,16 @@ setup(() => {
 
 teardown(() => {
   moduleWithLoad._load = originalLoad;
-  const coordinator = require("./fileWriteCoordinator") as FileWriteCoordinatorModule;
+  const coordinator =
+    require("./fileWriteCoordinator") as FileWriteCoordinatorModule;
   coordinator.setWriteCoordinatorVscodeForTesting(undefined);
   clearAcpClientModules();
 });
 
 suite("fileWriteCoordinator", () => {
   test("updates open clean documents through workspace edits and save", async () => {
-    const coordinator = require("./fileWriteCoordinator") as FileWriteCoordinatorModule;
+    const coordinator =
+      require("./fileWriteCoordinator") as FileWriteCoordinatorModule;
 
     const document = createMockDocument(
       "/workspace/test.ts",
@@ -214,14 +215,18 @@ suite("fileWriteCoordinator", () => {
     assert.equal(applyEditCalls.length, 1);
     assert.equal(writeCalls.length, 1);
     assert.equal(writeCalls[0].uri.fsPath, "/workspace/test.ts");
-    assert.equal(new TextDecoder().decode(writeCalls[0].bytes), "export const value = 2;");
+    assert.equal(
+      new TextDecoder().decode(writeCalls[0].bytes),
+      "export const value = 2;",
+    );
     assert.equal(document.getText(), "export const value = 2;");
     assert.equal(document.saveCount, 1);
     assert.equal(document.isDirty, false);
   });
 
   test("overwrites dirty open documents through the shared coordinator", async () => {
-    const coordinator = require("./fileWriteCoordinator") as FileWriteCoordinatorModule;
+    const coordinator =
+      require("./fileWriteCoordinator") as FileWriteCoordinatorModule;
 
     const document = createMockDocument(
       "/workspace/test.ts",
@@ -249,13 +254,23 @@ suite("fileWriteCoordinator", () => {
   });
 
   test("multiple writes to the same URI execute in order", async () => {
-    const coordinator = require("./fileWriteCoordinator") as FileWriteCoordinatorModule;
+    const coordinator =
+      require("./fileWriteCoordinator") as FileWriteCoordinatorModule;
 
     const uri = "/workspace/test.ts";
     await Promise.all([
-      coordinator.writeTextFileWithCoordinator(MockUri.parse(uri) as any, "first"),
-      coordinator.writeTextFileWithCoordinator(MockUri.parse(uri) as any, "second"),
-      coordinator.writeTextFileWithCoordinator(MockUri.parse(uri) as any, "third"),
+      coordinator.writeTextFileWithCoordinator(
+        MockUri.parse(uri) as any,
+        "first",
+      ),
+      coordinator.writeTextFileWithCoordinator(
+        MockUri.parse(uri) as any,
+        "second",
+      ),
+      coordinator.writeTextFileWithCoordinator(
+        MockUri.parse(uri) as any,
+        "third",
+      ),
     ]);
 
     assert.equal(writeCalls.length, 3);
@@ -265,11 +280,18 @@ suite("fileWriteCoordinator", () => {
   });
 
   test("writes to different URIs are independent", async () => {
-    const coordinator = require("./fileWriteCoordinator") as FileWriteCoordinatorModule;
+    const coordinator =
+      require("./fileWriteCoordinator") as FileWriteCoordinatorModule;
 
     await Promise.all([
-      coordinator.writeTextFileWithCoordinator(MockUri.parse("/workspace/a.ts") as any, "content-a"),
-      coordinator.writeTextFileWithCoordinator(MockUri.parse("/workspace/b.ts") as any, "content-b"),
+      coordinator.writeTextFileWithCoordinator(
+        MockUri.parse("/workspace/a.ts") as any,
+        "content-a",
+      ),
+      coordinator.writeTextFileWithCoordinator(
+        MockUri.parse("/workspace/b.ts") as any,
+        "content-b",
+      ),
     ]);
 
     assert.equal(writeCalls.length, 2);

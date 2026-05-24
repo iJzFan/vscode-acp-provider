@@ -73,9 +73,7 @@ export function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-export function toStringArray(
-  value: unknown,
-): readonly string[] | undefined {
+export function toStringArray(value: unknown): readonly string[] | undefined {
   if (!Array.isArray(value)) {
     return undefined;
   }
@@ -104,7 +102,8 @@ async function loadEditorMcpServers(
   logger: vscode.LogOutputChannel,
   source: ImportedConfigSource,
 ): Promise<readonly AcpMcpServerConfiguration[]> {
-  const logPrefix = source.kind === "workspace" ? "workspace-mcp" : "profile-mcp";
+  const logPrefix =
+    source.kind === "workspace" ? "workspace-mcp" : "profile-mcp";
   if (!(await fileExists(configUri))) {
     return [];
   }

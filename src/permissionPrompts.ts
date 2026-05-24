@@ -623,12 +623,16 @@ export class PermissionPromptManager
     if (command !== "unknown") {
       if (HIGH_RISK_COMMAND_PATTERNS.some((pattern) => pattern.test(command))) {
         score = Math.max(score, 3);
-        reasons.add("The command looks destructive or could make irreversible system changes.");
+        reasons.add(
+          "The command looks destructive or could make irreversible system changes.",
+        );
       } else if (
         MEDIUM_RISK_COMMAND_PATTERNS.some((pattern) => pattern.test(command))
       ) {
         score = Math.max(score, 2);
-        reasons.add("The command installs packages, changes files, or reaches a network endpoint.");
+        reasons.add(
+          "The command installs packages, changes files, or reaches a network endpoint.",
+        );
       }
 
       if (/https?:\/\//i.test(command)) {
@@ -640,7 +644,9 @@ export class PermissionPromptManager
     if (/(delete|remove|reset|overwrite|destroy|drop)/i.test(titleText)) {
       score = Math.max(score, 3);
       reasons.add("The tool description suggests destructive changes.");
-    } else if (/(write|edit|patch|modify|move|rename|create)/i.test(titleText)) {
+    } else if (
+      /(write|edit|patch|modify|move|rename|create)/i.test(titleText)
+    ) {
       score = Math.max(score, 2);
       reasons.add("The tool may modify files or workspace state.");
     }
@@ -661,9 +667,7 @@ export class PermissionPromptManager
       return "Risk: low.";
     }
 
-    const reasonText = risk.reasons.length
-      ? ` ${risk.reasons.join(" ")}`
-      : "";
+    const reasonText = risk.reasons.length ? ` ${risk.reasons.join(" ")}` : "";
     return `Risk: ${risk.level.toUpperCase()}.${reasonText}`;
   }
 

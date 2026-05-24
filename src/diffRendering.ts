@@ -44,9 +44,10 @@ export type ToolDiffArtifact = {
 export function getToolDiffArtifactKey(fileUri: vscode.Uri): string {
   if (fileUri.scheme === "file") {
     const normalizedPath = path.normalize(fileUri.fsPath || fileUri.path);
-    const canonicalPath = process.platform === "win32"
-      ? normalizedPath.toLowerCase()
-      : normalizedPath;
+    const canonicalPath =
+      process.platform === "win32"
+        ? normalizedPath.toLowerCase()
+        : normalizedPath;
     return `file:${canonicalPath}`;
   }
 
@@ -99,8 +100,7 @@ export function collectToolDiffArtifacts(
     const hasOriginal = content.oldText !== undefined;
     const hasModified = content.newText !== undefined;
     const isDeletion =
-      hasOriginal &&
-      (content.newText === "" || content.newText === undefined);
+      hasOriginal && (content.newText === "" || content.newText === undefined);
     const fileUri = resolveUri(content.path, workspaceRoot);
     const originalUri = hasOriginal
       ? createDiffUri({
@@ -130,7 +130,10 @@ export function collectToolDiffArtifacts(
       fileUri,
       originalUri,
       modifiedUri,
-      ...buildDiffStats(content.oldText ?? undefined, content.newText ?? undefined),
+      ...buildDiffStats(
+        content.oldText ?? undefined,
+        content.newText ?? undefined,
+      ),
       hasOriginal,
       hasModified,
       isDeletion,
@@ -221,16 +224,16 @@ export function collectToolMetadataDiffArtifacts(
     return [];
   }
 
-  const metadata = "metadata" in update.rawOutput &&
-      update.rawOutput.metadata &&
-      typeof update.rawOutput.metadata === "object"
-    ? update.rawOutput.metadata
-    : undefined;
-  const files = metadata &&
-      "files" in metadata &&
-      Array.isArray(metadata.files)
-    ? metadata.files
-    : undefined;
+  const metadata =
+    "metadata" in update.rawOutput &&
+    update.rawOutput.metadata &&
+    typeof update.rawOutput.metadata === "object"
+      ? update.rawOutput.metadata
+      : undefined;
+  const files =
+    metadata && "files" in metadata && Array.isArray(metadata.files)
+      ? metadata.files
+      : undefined;
   if (!files?.length) {
     return [];
   }
@@ -242,11 +245,12 @@ export function collectToolMetadataDiffArtifacts(
     }
 
     const entry = file as ToolMetadataFileEntry;
-    const rawPath = typeof entry.filePath === "string"
-      ? entry.filePath
-      : typeof entry.relativePath === "string"
-        ? entry.relativePath
-        : undefined;
+    const rawPath =
+      typeof entry.filePath === "string"
+        ? entry.filePath
+        : typeof entry.relativePath === "string"
+          ? entry.relativePath
+          : undefined;
     if (!rawPath) {
       continue;
     }

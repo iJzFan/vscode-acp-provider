@@ -11,7 +11,8 @@ export async function collectAuggieManualCommands(
   outputChannel: vscode.LogOutputChannel,
 ): Promise<ManualCommandConfigurationEntry[]> {
   const executable = agent?.command?.trim() || "auggie";
-  const cwd = agent?.cwd?.trim() || vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+  const cwd =
+    agent?.cwd?.trim() || vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
   const env = {
     ...process.env,
     ...(agent?.env ?? {}),
@@ -51,7 +52,8 @@ export async function collectAuggieManualCommands(
       if (code !== 0) {
         reject(
           new Error(
-            errorOutput.trim() || `\`auggie command help\` exited with code ${code}.`,
+            errorOutput.trim() ||
+              `\`auggie command help\` exited with code ${code}.`,
           ),
         );
         return;

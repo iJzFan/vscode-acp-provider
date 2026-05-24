@@ -149,7 +149,10 @@ suite("diffRendering", () => {
     );
 
     assert.equal(artifacts.length, 1);
-    assert.equal(artifacts[0].fileUri.fsPath, path.join(workspaceRoot.fsPath, "src", "example.ts"));
+    assert.equal(
+      artifacts[0].fileUri.fsPath,
+      path.join(workspaceRoot.fsPath, "src", "example.ts"),
+    );
     assert.equal(artifacts[0].hasOriginal, true);
     assert.equal(artifacts[0].hasModified, true);
 
@@ -218,7 +221,10 @@ suite("diffRendering", () => {
     }) as MockChatResponseMultiDiffPart;
 
     assert.equal(part.value.length, 1);
-    assert.equal((part.value[0] as { goToFileUri?: unknown }).goToFileUri, undefined);
+    assert.equal(
+      (part.value[0] as { goToFileUri?: unknown }).goToFileUri,
+      undefined,
+    );
   });
 
   test("mergeToolDiffArtifacts preserves the earliest original and latest final text", () => {
@@ -263,8 +269,14 @@ suite("diffRendering", () => {
     assert.equal(merged.newText, "const value = 3;\n");
     assert.equal(merged.hasOriginal, true);
     assert.equal(merged.hasModified, true);
-    assert.equal(merged.originalUri?.toString(), firstArtifacts[0].originalUri?.toString());
-    assert.equal(merged.modifiedUri?.toString(), secondArtifacts[0].modifiedUri?.toString());
+    assert.equal(
+      merged.originalUri?.toString(),
+      firstArtifacts[0].originalUri?.toString(),
+    );
+    assert.equal(
+      merged.modifiedUri?.toString(),
+      secondArtifacts[0].modifiedUri?.toString(),
+    );
   });
 
   test("multi-file sessions retain separate cumulative entries", () => {

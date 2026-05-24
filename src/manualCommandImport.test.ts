@@ -4,7 +4,8 @@ import { parseAuggieCommandHelpOutput } from "./auggieCommandParser";
 
 suite("manualCommandImport", () => {
   test("parses Auggie command help output into manual commands", () => {
-    const commands = parseAuggieCommandHelpOutput(`Usage: auggie command|commands [options] [command]
+    const commands =
+      parseAuggieCommandHelpOutput(`Usage: auggie command|commands [options] [command]
 
 Commands:
   list|ls                                   List all available custom commands

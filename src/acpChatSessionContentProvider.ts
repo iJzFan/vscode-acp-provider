@@ -7,10 +7,7 @@ import type {
   SessionConfigSelectOption,
 } from "@agentclientprotocol/sdk";
 import { AcpChatParticipant } from "./acpChatParticipant";
-import {
-  AcpSessionManager,
-  Options,
-} from "./acpSessionManager";
+import { AcpSessionManager, Options } from "./acpSessionManager";
 import { DisposableBase } from "./disposables";
 import {
   ThinkingEffortModes,
@@ -81,7 +78,7 @@ export class AcpChatSessionContentProvider
           ? {}
           : {
               [VscodeSessionOptions.Think]: acpSession.thinkState.enabled
-                ? (acpSession.thinkState.config || "think")
+                ? acpSession.thinkState.config || "think"
                 : "",
             }),
       },
@@ -106,7 +103,10 @@ export class AcpChatSessionContentProvider
 
     const modeState = options.modes;
     const configOptionKeys = getConfigOptionKeys(options.configOptions);
-    if (modeState && !hasConfigOption(configOptionKeys, VscodeSessionOptions.Mode)) {
+    if (
+      modeState &&
+      !hasConfigOption(configOptionKeys, VscodeSessionOptions.Mode)
+    ) {
       const modeOptions: vscode.ChatSessionProviderOptionItem[] =
         modeState.availableModes.map((mode) => ({
           id: mode.id,
@@ -122,7 +122,10 @@ export class AcpChatSessionContentProvider
     }
 
     const modelState = options.models;
-    if (modelState && !hasConfigOption(configOptionKeys, VscodeSessionOptions.Model)) {
+    if (
+      modelState &&
+      !hasConfigOption(configOptionKeys, VscodeSessionOptions.Model)
+    ) {
       const modelOptions: vscode.ChatSessionProviderOptionItem[] =
         modelState.availableModels.map((model) => ({
           id: model.modelId,
@@ -236,7 +239,7 @@ export class AcpChatSessionContentProvider
         );
 
         if (thinkResult.downgradedToStartupOnly) {
-          const modeLabel = enabled ? (config || "think") : "off";
+          const modeLabel = enabled ? config || "think" : "off";
           this.supportsLiveThinkingEffort = false;
           this.logChannel.info(
             `ACP agent does not support live thinking-effort updates for agent session ${session.acpSessionId}; hiding the Thinking session option and keeping '${modeLabel}' as the startup preference.`,
@@ -273,7 +276,10 @@ function getConfigOptionKeys(
   return { ids, categories };
 }
 
-function hasConfigOption(keys: ConfigOptionKeys, idOrCategory: string): boolean {
+function hasConfigOption(
+  keys: ConfigOptionKeys,
+  idOrCategory: string,
+): boolean {
   return keys.ids.has(idOrCategory) || keys.categories.has(idOrCategory);
 }
 
@@ -319,10 +325,18 @@ function flattenConfigOptionItems(
   for (const optionOrGroup of configOption.options) {
     if (isSessionConfigSelectGroup(optionOrGroup)) {
       for (const option of optionOrGroup.options) {
-        items.push(toProviderOptionItem(option, configOption.currentValue, optionOrGroup));
+        items.push(
+          toProviderOptionItem(
+            option,
+            configOption.currentValue,
+            optionOrGroup,
+          ),
+        );
       }
     } else {
-      items.push(toProviderOptionItem(optionOrGroup, configOption.currentValue));
+      items.push(
+        toProviderOptionItem(optionOrGroup, configOption.currentValue),
+      );
     }
   }
   return items;
@@ -347,7 +361,9 @@ function toProviderOptionItem(
   };
 }
 
-function getConfigOptionFallbackName(configOption: SessionConfigOption): string {
+function getConfigOptionFallbackName(
+  configOption: SessionConfigOption,
+): string {
   switch (configOption.category) {
     case VscodeSessionOptions.Mode:
       return vscode.l10n.t("Mode");

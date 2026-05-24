@@ -35,8 +35,14 @@ export function registerCommands(
       async () => collectAuggieManualCommands(currentAuggie, outputChannel),
     );
 
-    const mergedManualCommands = new Map<string, ManualCommandConfigurationEntry>(
-      (currentAuggie?.manualCommands ?? []).map((command) => [command.name, command]),
+    const mergedManualCommands = new Map<
+      string,
+      ManualCommandConfigurationEntry
+    >(
+      (currentAuggie?.manualCommands ?? []).map((command) => [
+        command.name,
+        command,
+      ]),
     );
     for (const command of importedCommands) {
       mergedManualCommands.set(command.name, command);
@@ -57,7 +63,11 @@ export function registerCommands(
       },
     };
 
-    await config.update("agents", updatedAgents, vscode.ConfigurationTarget.Global);
+    await config.update(
+      "agents",
+      updatedAgents,
+      vscode.ConfigurationTarget.Global,
+    );
     outputChannel.info(
       `[acp:auggie] Imported ${importedCommands.length} manual commands into user settings.`,
     );

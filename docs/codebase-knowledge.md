@@ -414,21 +414,21 @@ export const VscodeSessionOptions = {
 
 ## 7. VS Code Proposed APIs Used
 
-| API                                                                           | File                                   | Purpose                                                                                                                                 |
-| ----------------------------------------------------------------------------- | -------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------- |
-| `vscode.chat.registerChatSessionContentProvider(type, provider, participant)` | `extension.ts`                         | Registers picker provider and content provider per agent                                                                                |
-| `vscode.chat.createChatSessionItemController(type, refreshHandler)`           | `acpLifecycledChatSessionItemController.ts` | Creates the session list sidebar controller per agent                                                                              |
+| API                                                                           | File                                        | Purpose                                                                                                                                 |
+| ----------------------------------------------------------------------------- | ------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------- |
+| `vscode.chat.registerChatSessionContentProvider(type, provider, participant)` | `extension.ts`                              | Registers picker provider and content provider per agent                                                                                |
+| `vscode.chat.createChatSessionItemController(type, refreshHandler)`           | `acpLifecycledChatSessionItemController.ts` | Creates the session list sidebar controller per agent                                                                                   |
 | `ChatSessionItemController.newChatSessionItemHandler`                         | `acpLifecycledChatSessionItemController.ts` | Called by VS Code when a new (untitled) session sends its first request; returns an initialised `ChatSessionItem` with the real ACP URI |
-| `ChatSessionItemController.items` (collection)                                | `acpLifecycledChatSessionItemController.ts` | Managed set of `ChatSessionItem` objects, updated on session state changes                                                         |
-| `vscode.chat.createChatParticipant(id, handler)`                              | `extension.ts`                         | Registers the chat participant                                                                                                          |
-| `ChatSessionContentProvider.provideChatSessionContent()`                      | `acpChatSessionContentProvider.ts:52`  | Returns session history + initial option values + `title`                                                                               |
-| `ChatSessionContentProvider.provideChatSessionProviderOptions()`              | `acpChatSessionContentProvider.ts:79`  | Returns available picker groups (mode, model, thought-level)                                                                            |
-| `ChatSessionContentProvider.provideHandleOptionsChange()`                     | `acpChatSessionContentProvider.ts:158` | Handles user picker selections                                                                                                          |
-| `onDidChangeChatSessionProviderOptions` event                                 | `acpChatSessionContentProvider.ts:46`  | Tells VS Code to re-query the full options list                                                                                         |
-| `onDidChangeChatSessionOptions` event                                         | `acpChatSessionContentProvider.ts:41`  | Pushes a new current selection value to a picker                                                                                        |
-| `vscode.lm.registerLanguageModelChatProvider("acp", ...)`                     | `extension.ts`                         | Stub model registration (required by VS Code)                                                                                           |
-| `vscode.lm.invokeTool(VscodeGetConfirmation, ...)`                            | `permissionPrompts.ts`                 | In-chat permission confirmation UI                                                                                                      |
-| `response.questionCarousel(questions, false)`                                 | `acpChatParticipant.ts`                | Interactive question UI in chat stream                                                                                                  |
+| `ChatSessionItemController.items` (collection)                                | `acpLifecycledChatSessionItemController.ts` | Managed set of `ChatSessionItem` objects, updated on session state changes                                                              |
+| `vscode.chat.createChatParticipant(id, handler)`                              | `extension.ts`                              | Registers the chat participant                                                                                                          |
+| `ChatSessionContentProvider.provideChatSessionContent()`                      | `acpChatSessionContentProvider.ts:52`       | Returns session history + initial option values + `title`                                                                               |
+| `ChatSessionContentProvider.provideChatSessionProviderOptions()`              | `acpChatSessionContentProvider.ts:79`       | Returns available picker groups (mode, model, thought-level)                                                                            |
+| `ChatSessionContentProvider.provideHandleOptionsChange()`                     | `acpChatSessionContentProvider.ts:158`      | Handles user picker selections                                                                                                          |
+| `onDidChangeChatSessionProviderOptions` event                                 | `acpChatSessionContentProvider.ts:46`       | Tells VS Code to re-query the full options list                                                                                         |
+| `onDidChangeChatSessionOptions` event                                         | `acpChatSessionContentProvider.ts:41`       | Pushes a new current selection value to a picker                                                                                        |
+| `vscode.lm.registerLanguageModelChatProvider("acp", ...)`                     | `extension.ts`                              | Stub model registration (required by VS Code)                                                                                           |
+| `vscode.lm.invokeTool(VscodeGetConfirmation, ...)`                            | `permissionPrompts.ts`                      | In-chat permission confirmation UI                                                                                                      |
+| `response.questionCarousel(questions, false)`                                 | `acpChatParticipant.ts`                     | Interactive question UI in chat stream                                                                                                  |
 
 Proposed API declarations are in the root-level `.d.ts` files:
 
@@ -442,18 +442,18 @@ Proposed API declarations are in the root-level `.d.ts` files:
 
 ## 8. Key File Map
 
-| File                                   | Responsibility                                                                                                                                |
-| -------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------- |
-| `src/extension.ts`                     | Activation, agent registration, proposed API wiring                                                                                           |
-| `src/acpClient.ts`                     | `AcpClientImpl` — process spawn, ACP protocol, model/mode/config state                                                                        |
-| `src/acpSessionManager.ts`             | `SessionManager` + `Session` — session CRUD, caching, event routing                                                                           |
-| `src/acpChatSessionContentProvider.ts` | `AcpChatSessionContentProvider` — VS Code picker integration                                                                                  |
+| File                                            | Responsibility                                                                                                                                |
+| ----------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------- |
+| `src/extension.ts`                              | Activation, agent registration, proposed API wiring                                                                                           |
+| `src/acpClient.ts`                              | `AcpClientImpl` — process spawn, ACP protocol, model/mode/config state                                                                        |
+| `src/acpSessionManager.ts`                      | `SessionManager` + `Session` — session CRUD, caching, event routing                                                                           |
+| `src/acpChatSessionContentProvider.ts`          | `AcpChatSessionContentProvider` — VS Code picker integration                                                                                  |
 | `src/acpLifecycledChatSessionItemController.ts` | `createAcpChatSessionItemController` + `LifecycledChatSessionItemController` — sidebar session list using `ChatSessionItemController` pattern |
-| `src/acpChatParticipant.ts`            | `AcpChatParticipant` — prompt handling, streaming, tool calls                                                                                 |
-| `src/acpSessionDb.ts`                  | `SqlLiteSessionDb` — SQLite persistence for sessions                                                                                          |
-| `src/chatIdentifiers.ts`               | URI scheme helpers: `createSessionUri`, `decodeVscodeResource`                                                                                |
-| `src/agentRegistry.ts`                 | `AgentRegistry` — reads agent config from VS Code settings                                                                                    |
-| `src/permissionPrompts.ts`             | Permission/confirmation UI during tool invocations                                                                                            |
-| `src/types.ts`                         | Shared types and `VscodeSessionOptions` constants                                                                                             |
-| `src/turnBuilder.ts`                   | Reconstructs VS Code chat history turns from `SessionNotification[]`                                                                          |
-| `src/testScenarios.ts`                 | Mock ACP client responses for extension tests                                                                                                 |
+| `src/acpChatParticipant.ts`                     | `AcpChatParticipant` — prompt handling, streaming, tool calls                                                                                 |
+| `src/acpSessionDb.ts`                           | `SqlLiteSessionDb` — SQLite persistence for sessions                                                                                          |
+| `src/chatIdentifiers.ts`                        | URI scheme helpers: `createSessionUri`, `decodeVscodeResource`                                                                                |
+| `src/agentRegistry.ts`                          | `AgentRegistry` — reads agent config from VS Code settings                                                                                    |
+| `src/permissionPrompts.ts`                      | Permission/confirmation UI during tool invocations                                                                                            |
+| `src/types.ts`                                  | Shared types and `VscodeSessionOptions` constants                                                                                             |
+| `src/turnBuilder.ts`                            | Reconstructs VS Code chat history turns from `SessionNotification[]`                                                                          |
+| `src/testScenarios.ts`                          | Mock ACP client responses for extension tests                                                                                                 |

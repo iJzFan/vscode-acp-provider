@@ -35,6 +35,9 @@ type ParsedUserMessage = {
   references: vscode.ChatPromptReference[];
 };
 
+// TurnBuilder replays ACP notification streams into VS Code chat turns. It keeps
+// user text, agent markdown chunks, tool invocations, and diff artifacts buffered
+// separately so history replay preserves the same ordering users saw live.
 export class TurnBuilder {
   private currentUserMessage = "";
   private currentUserReferences: vscode.ChatPromptReference[] = [];
@@ -311,6 +314,9 @@ export class TurnBuilder {
       return;
     }
 
+    // Tool updates can report both per-call diffs and final snapshot metadata.
+    // The cumulative map stores the earliest original and latest modified view
+    // per file so resumed sessions can still show a useful Modified files roll-up.
     for (const artifact of artifacts) {
       const key = getToolDiffArtifactKey(artifact.fileUri);
       const existing = this.cumulativeDiffArtifacts.get(key);

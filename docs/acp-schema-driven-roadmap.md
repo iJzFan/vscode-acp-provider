@@ -21,12 +21,12 @@ This roadmap starts from the current `0.1.0` feature baseline:
 
 ## Priority Overview
 
-| Priority | Theme | Why now |
-| --- | --- | --- |
-| P0 | Cost, stop reasons, session info, tool follow-along | Highest UX payoff with low protocol risk |
-| P1 | Session fork/resume and richer command UX | Makes long-running ACP sessions easier to manage |
-| P2 | Embedded resources, image input, auth flows | Unlocks higher-capability agents and better onboarding |
-| P3 | Request-level cancellation, annotations-aware rendering | Valuable, but lower urgency or higher implementation complexity |
+| Priority | Theme                                                   | Why now                                                         |
+| -------- | ------------------------------------------------------- | --------------------------------------------------------------- |
+| P0       | Cost, stop reasons, session info, tool follow-along     | Highest UX payoff with low protocol risk                        |
+| P1       | Session fork/resume and richer command UX               | Makes long-running ACP sessions easier to manage                |
+| P2       | Embedded resources, image input, auth flows             | Unlocks higher-capability agents and better onboarding          |
+| P3       | Request-level cancellation, annotations-aware rendering | Valuable, but lower urgency or higher implementation complexity |
 
 ## P0: Upgrade The Existing Session UX
 

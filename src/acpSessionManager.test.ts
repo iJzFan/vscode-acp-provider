@@ -135,11 +135,10 @@ teardown(() => {
 
 suite("acpSessionManager", () => {
   test("invalidates active sessions after the ACP client stops", async () => {
-    const {
-      createAcpSessionManager,
-      setSessionManagerVscodeForTesting,
-    } = require("./acpSessionManager") as typeof import("./acpSessionManager");
-    const { setPermittedPathsVscodeForTesting } = require("./permittedPaths") as typeof import("./permittedPaths");
+    const { createAcpSessionManager, setSessionManagerVscodeForTesting } =
+      require("./acpSessionManager") as typeof import("./acpSessionManager");
+    const { setPermittedPathsVscodeForTesting } =
+      require("./permittedPaths") as typeof import("./permittedPaths");
     setSessionManagerVscodeForTesting(mockVscode as any);
     setPermittedPathsVscodeForTesting(mockVscode as any);
 
@@ -225,7 +224,10 @@ suite("acpSessionManager", () => {
     const untitledResource = MockUri.parse("acp-auggie:/untitled-1") as any;
     const firstResult = await manager.createOrGet(untitledResource);
     assert.equal(firstResult.session.acpSessionId, "session-1");
-    assert.equal(manager.getActive(untitledResource)?.acpSessionId, "session-1");
+    assert.equal(
+      manager.getActive(untitledResource)?.acpSessionId,
+      "session-1",
+    );
 
     stopEmitter.fire();
 
@@ -241,11 +243,10 @@ suite("acpSessionManager", () => {
   });
 
   test("drops completed untitled sessions so a new untitled chat gets a fresh ACP session", async () => {
-    const {
-      createAcpSessionManager,
-      setSessionManagerVscodeForTesting,
-    } = require("./acpSessionManager") as typeof import("./acpSessionManager");
-    const { setPermittedPathsVscodeForTesting } = require("./permittedPaths") as typeof import("./permittedPaths");
+    const { createAcpSessionManager, setSessionManagerVscodeForTesting } =
+      require("./acpSessionManager") as typeof import("./acpSessionManager");
+    const { setPermittedPathsVscodeForTesting } =
+      require("./permittedPaths") as typeof import("./permittedPaths");
     setSessionManagerVscodeForTesting(mockVscode as any);
     setPermittedPathsVscodeForTesting(mockVscode as any);
 
@@ -328,8 +329,12 @@ suite("acpSessionManager", () => {
       () => client as any,
     );
 
-    const firstUntitledResource = MockUri.parse("acp-auggie:/untitled-1") as any;
-    const secondUntitledResource = MockUri.parse("acp-auggie:/untitled-2") as any;
+    const firstUntitledResource = MockUri.parse(
+      "acp-auggie:/untitled-1",
+    ) as any;
+    const secondUntitledResource = MockUri.parse(
+      "acp-auggie:/untitled-2",
+    ) as any;
 
     const firstResult = await manager.createOrGet(firstUntitledResource);
     assert.equal(firstResult.session.acpSessionId, "session-1");
@@ -349,11 +354,10 @@ suite("acpSessionManager", () => {
   });
 
   test("reuses an already active named session without creating another ACP session", async () => {
-    const {
-      createAcpSessionManager,
-      setSessionManagerVscodeForTesting,
-    } = require("./acpSessionManager") as typeof import("./acpSessionManager");
-    const { setPermittedPathsVscodeForTesting } = require("./permittedPaths") as typeof import("./permittedPaths");
+    const { createAcpSessionManager, setSessionManagerVscodeForTesting } =
+      require("./acpSessionManager") as typeof import("./acpSessionManager");
+    const { setPermittedPathsVscodeForTesting } =
+      require("./permittedPaths") as typeof import("./permittedPaths");
     setSessionManagerVscodeForTesting(mockVscode as any);
     setPermittedPathsVscodeForTesting(mockVscode as any);
 
@@ -445,7 +449,10 @@ suite("acpSessionManager", () => {
 
     const secondResult = await manager.createOrGet(namedResource);
 
-    assert.equal(secondResult.session.acpSessionId, firstResult.session.acpSessionId);
+    assert.equal(
+      secondResult.session.acpSessionId,
+      firstResult.session.acpSessionId,
+    );
     assert.equal(createSessionCalls, 1);
 
     manager.dispose();

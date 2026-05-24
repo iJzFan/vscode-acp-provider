@@ -36,7 +36,9 @@ export async function writeTextFileWithCoordinator(
     edit.replace(uri, getFullDocumentRange(openDoc), content);
     const applied = await vscodeApi.workspace.applyEdit(edit);
     if (!applied) {
-      throw new Error(`Failed to apply ACP workspace edit for ${uri.toString()}`);
+      throw new Error(
+        `Failed to apply ACP workspace edit for ${uri.toString()}`,
+      );
     }
 
     const saved = await openDoc.save();

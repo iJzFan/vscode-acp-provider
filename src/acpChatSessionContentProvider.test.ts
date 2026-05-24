@@ -102,7 +102,8 @@ suite("acpChatSessionContentProvider", () => {
   test("surfaces ACP session config options as provider option groups", async () => {
     const restoreMockVscode = installMockVscode();
     clearContentProviderModules();
-    const { AcpChatSessionContentProvider } = require("./acpChatSessionContentProvider") as typeof import("./acpChatSessionContentProvider");
+    const { AcpChatSessionContentProvider } =
+      require("./acpChatSessionContentProvider") as typeof import("./acpChatSessionContentProvider");
     const provider = new AcpChatSessionContentProvider(
       {
         onDidOptionsChange: new MockEventEmitter<void>().event,
@@ -152,7 +153,8 @@ suite("acpChatSessionContentProvider", () => {
   test("routes ACP config option changes through setSessionConfigOption", async () => {
     const restoreMockVscode = installMockVscode();
     clearContentProviderModules();
-    const { AcpChatSessionContentProvider } = require("./acpChatSessionContentProvider") as typeof import("./acpChatSessionContentProvider");
+    const { AcpChatSessionContentProvider } =
+      require("./acpChatSessionContentProvider") as typeof import("./acpChatSessionContentProvider");
     const setConfigCalls: Array<{ configId: string; value: string }> = [];
     const changeModelCalls: string[] = [];
     const session = {
@@ -178,7 +180,11 @@ suite("acpChatSessionContentProvider", () => {
       {
         onDidOptionsChange: new MockEventEmitter<void>().event,
         onDidContextWindowChange: new MockEventEmitter<unknown>().event,
-        getOptions: async () => ({ modes: null, models: null, configOptions: [] }),
+        getOptions: async () => ({
+          modes: null,
+          models: null,
+          configOptions: [],
+        }),
         getActive: () => session,
       } as any,
       { requestHandler: async () => void 0 } as any,

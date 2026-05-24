@@ -42,8 +42,12 @@ teardown(() => {
 
 suite("acpClient cancel", () => {
   test("skips protocol cancel when no ACP request id is available", async () => {
-    const { sendSessionCancel } = require("./acpClient") as typeof import("./acpClient");
-    const cancelCalls: Array<{ sessionId: string; requestId: string | number | null }> = [];
+    const { sendSessionCancel } =
+      require("./acpClient") as typeof import("./acpClient");
+    const cancelCalls: Array<{
+      sessionId: string;
+      requestId: string | number | null;
+    }> = [];
     const debugMessages: string[] = [];
 
     const didCancel = await sendSessionCancel(
@@ -74,8 +78,12 @@ suite("acpClient cancel", () => {
   });
 
   test("sends protocol cancel when a request id is provided", async () => {
-    const { sendSessionCancel } = require("./acpClient") as typeof import("./acpClient");
-    const cancelCalls: Array<{ sessionId: string; requestId: string | number | null }> = [];
+    const { sendSessionCancel } =
+      require("./acpClient") as typeof import("./acpClient");
+    const cancelCalls: Array<{
+      sessionId: string;
+      requestId: string | number | null;
+    }> = [];
 
     const didCancel = await sendSessionCancel(
       {

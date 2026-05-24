@@ -147,6 +147,11 @@ export class Session {
   }
 }
 
+// SessionManager owns the identity translation between VS Code resources and
+// agent-native ACP session ids. Untitled VS Code resources are temporary keys;
+// committed ACP session URIs become the durable keys used for disk persistence,
+// history replay, sidebar entries, and cumulative changed-file state.
+
 export type Options = {
   modes: SessionModeState | null;
   models: SessionModelState | null;
@@ -165,7 +170,10 @@ export interface AcpSessionManager extends vscode.Disposable {
   onDidChangeSession: vscode.Event<{ original: Session; modified: Session }>;
   onDidOptionsChange: vscode.Event<void>;
   onDidUsageUpdate: vscode.Event<{ modelId: string; maxWindowSize: number }>;
-  onDidContextWindowChange: vscode.Event<{ resource: vscode.Uri; modelId: string }>;
+  onDidContextWindowChange: vscode.Event<{
+    resource: vscode.Uri;
+    modelId: string;
+  }>;
 
   createOrGet(vscodeResource: vscode.Uri): Promise<{
     session: Session;
@@ -283,9 +291,9 @@ class SessionManager extends DisposableBase implements AcpSessionManager {
 
   private readonly _onDidContextWindowChange =
     new sessionManagerVscode.EventEmitter<{
-    resource: vscode.Uri;
-    modelId: string;
-  }>();
+      resource: vscode.Uri;
+      modelId: string;
+    }>();
   onDidContextWindowChange: vscode.Event<{
     resource: vscode.Uri;
     modelId: string;
@@ -296,7 +304,10 @@ class SessionManager extends DisposableBase implements AcpSessionManager {
   private activeSessions: Map<string, Session> = new Map();
   private availableCommands: Map<string, SurfacedCommand[]> = new Map();
   private discoveredSkills: ScannedSkill[] = [];
-  private cumulativeToolDiffs = new Map<string, Map<string, ToolDiffArtifact>>();
+  private cumulativeToolDiffs = new Map<
+    string,
+    Map<string, ToolDiffArtifact>
+  >();
   private probeSession: {
     acpSessionId: string;
     modes: SessionModeState | null;
@@ -331,6 +342,9 @@ class SessionManager extends DisposableBase implements AcpSessionManager {
     this.refreshSkills();
     const decodedResource = decodeVscodeResource(vscodeResource);
 
+    // Always consult the active map before hitting disk or the agent. This keeps
+    // VS Code refreshes, sidebar reopens, and back-to-list navigations attached
+    // to the same live ACP session instead of spawning duplicate processes.
     const activeSession = this.activeSessions.get(decodedResource.sessionId);
     if (activeSession) {
       return { session: activeSession };
@@ -381,10 +395,7 @@ class SessionManager extends DisposableBase implements AcpSessionManager {
         },
       );
       if (thinkingSettings?.thinkingModeEnabled) {
-        session.setThinkState(
-          true,
-          thinkingSettings.thinkingConfig ?? "think",
-        );
+        session.setThinkState(true, thinkingSettings.thinkingConfig ?? "think");
       }
       this.activeSessions.set(decodedResource.sessionId, session);
 
@@ -437,7 +448,8 @@ class SessionManager extends DisposableBase implements AcpSessionManager {
           );
           return { session, history };
         } catch (error) {
-          const errorMessage = error instanceof Error ? error.message : String(error);
+          const errorMessage =
+            error instanceof Error ? error.message : String(error);
           if (
             errorMessage.includes("Session not found") ||
             errorMessage.includes("not found")
@@ -484,10 +496,7 @@ class SessionManager extends DisposableBase implements AcpSessionManager {
         },
       );
       if (thinkingSettings?.thinkingModeEnabled) {
-        session.setThinkState(
-          true,
-          thinkingSettings.thinkingConfig ?? "think",
-        );
+        session.setThinkState(true, thinkingSettings.thinkingConfig ?? "think");
       }
       this.activeSessions.set(decodedResource.sessionId, session);
 
@@ -747,10 +756,12 @@ class SessionManager extends DisposableBase implements AcpSessionManager {
     );
   }
 
-  private getDefaultThinkingSettings(): {
-    thinkingModeEnabled: boolean;
-    thinkingConfig?: ThinkConfig;
-  } | undefined {
+  private getDefaultThinkingSettings():
+    | {
+        thinkingModeEnabled: boolean;
+        thinkingConfig?: ThinkConfig;
+      }
+    | undefined {
     const configuredDefault = this.agent.defaultThinkingEffort;
     if (!configuredDefault || configuredDefault === "off") {
       return undefined;
@@ -809,7 +820,10 @@ class SessionManager extends DisposableBase implements AcpSessionManager {
     );
     snapshot.title = session.title;
     if (session.thinkState.enabled) {
-      snapshot.setThinkState(session.thinkState.enabled, session.thinkState.config);
+      snapshot.setThinkState(
+        session.thinkState.enabled,
+        session.thinkState.config,
+      );
     }
 
     switch (session.status) {

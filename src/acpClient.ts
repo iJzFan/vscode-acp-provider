@@ -59,6 +59,10 @@ const CLIENT_INFO = {
   version: "1.0.0",
 };
 
+// ACP agents usually bind capabilities and lifecycle state to a single process.
+// The client therefore treats the subprocess, ndjson streams, initialize
+// response, and session-mode request path as one restartable connection unit.
+
 export interface AcpClient extends Client, vscode.Disposable {
   onSessionUpdate: vscode.Event<SessionNotification>;
   onDidStop: vscode.Event<void>;
@@ -206,6 +210,9 @@ class AcpClientImpl extends DisposableBase implements AcpClient {
       }
     }
 
+    // Some agents distinguish new-session and load-session startup paths.
+    // Reusing a process across those modes can leak stale session state, so the
+    // connection is rebuilt whenever the expected mode changes.
     await this.stopProcess();
     this.readyPromise = this.createConnection(expectedMode);
     try {
@@ -360,14 +367,20 @@ class AcpClientImpl extends DisposableBase implements AcpClient {
     }
     if (update.sessionUpdate === "config_option_update") {
       this.configOptions = update.configOptions;
-      const modeValue = findConfigOptionCurrentValue(this.configOptions, "mode");
+      const modeValue = findConfigOptionCurrentValue(
+        this.configOptions,
+        "mode",
+      );
       if (modeValue && this.supportedModeState) {
         this.supportedModeState = {
           ...this.supportedModeState,
           currentModeId: modeValue,
         };
       }
-      const modelValue = findConfigOptionCurrentValue(this.configOptions, "model");
+      const modelValue = findConfigOptionCurrentValue(
+        this.configOptions,
+        "model",
+      );
       if (modelValue && this.supportedModelState) {
         this.supportedModelState = {
           ...this.supportedModelState,
@@ -389,11 +402,11 @@ class AcpClientImpl extends DisposableBase implements AcpClient {
       await this.setSessionConfigOption(sessionId, modeConfigOption.id, modeId);
       return;
     }
-    const resuest: SetSessionModeRequest = {
+    const request: SetSessionModeRequest = {
       modeId,
       sessionId,
     };
-    await this.connection.setSessionMode(resuest);
+    await this.connection.setSessionMode(request);
   }
 
   async changeModel(sessionId: string, modelId: string): Promise<void> {
@@ -602,7 +615,8 @@ class AcpClientImpl extends DisposableBase implements AcpClient {
       this._onDidStop.fire();
     });
     agentProc.on("error", (error) => {
-      const errorMessage = error instanceof Error ? error.message : String(error);
+      const errorMessage =
+        error instanceof Error ? error.message : String(error);
       this.logChannel.error(
         `agent:${this.agent.id} failed to start: ${errorMessage}`,
       );
@@ -625,6 +639,8 @@ class AcpClientImpl extends DisposableBase implements AcpClient {
     const stream = ndJsonStream(stdinStream, stdoutStream);
     this.connection = new ClientSideConnection(() => this, stream);
 
+    // Initialize immediately after the ndjson bridge is ready. The response is
+    // the source of truth for feature gating throughout the rest of the session.
     const initResponse = await this.connection.initialize({
       protocolVersion: PROTOCOL_VERSION,
       clientCapabilities: CLIENT_CAPABILITIES,
@@ -636,9 +652,8 @@ class AcpClientImpl extends DisposableBase implements AcpClient {
         CLIENT_CAPABILITIES,
       )}; agentCapabilities=${JSON.stringify(initResponse.agentCapabilities)}; authMethods=${formatAuthMethodSummary(initResponse)}`,
     );
-    const disabledClientCapabilities = getDisabledClientCapabilitySummary(
-      CLIENT_CAPABILITIES,
-    );
+    const disabledClientCapabilities =
+      getDisabledClientCapabilitySummary(CLIENT_CAPABILITIES);
     if (disabledClientCapabilities.length) {
       this.logChannel.info(
         `[acp:${this.agent.id}] Client capability caveat: ${disabledClientCapabilities.join(

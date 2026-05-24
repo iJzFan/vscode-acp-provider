@@ -106,16 +106,16 @@ This priority keeps repo-local intent above machine-global defaults.
 
 ## Configuration Mapping
 
-| Official surface | Reuse in ACP | Implementation rule | Initial phase |
-| --- | --- | --- | --- |
-| `.vscode/mcp.json` | Yes | Import `stdio` and `http` servers into a shared ACP MCP registry | Phase 1 |
-| user `mcp.json` | Yes | Import as global fallback MCP sources | Phase 1 |
-| `plugin.json` / `.claude-plugin/plugin.json` | Yes | Discover plugin metadata and attach compatible MCP metadata to ACP | Phase 2 |
-| plugin `.mcp.json` | Yes | Import plugin MCP servers into ACP shared MCP registry | Phase 2 |
-| `.github/copilot/settings.json` / `.claude/settings.json` | Partial | Reuse plugin marketplace and enablement hints, not runtime agent semantics | Phase 2 |
-| plugin hooks | Partial | Future ACP policy runner only; do not execute in v1 | Phase 3 |
-| plugin custom agents | Partial | Future metadata projection only; do not claim native compatibility in v1 | Phase 3 |
-| model picker / thinking effort | No direct import | Keep ACP model and mode options protocol-driven | Out of scope for config compatibility v1 |
+| Official surface                                          | Reuse in ACP     | Implementation rule                                                        | Initial phase                            |
+| --------------------------------------------------------- | ---------------- | -------------------------------------------------------------------------- | ---------------------------------------- |
+| `.vscode/mcp.json`                                        | Yes              | Import `stdio` and `http` servers into a shared ACP MCP registry           | Phase 1                                  |
+| user `mcp.json`                                           | Yes              | Import as global fallback MCP sources                                      | Phase 1                                  |
+| `plugin.json` / `.claude-plugin/plugin.json`              | Yes              | Discover plugin metadata and attach compatible MCP metadata to ACP         | Phase 2                                  |
+| plugin `.mcp.json`                                        | Yes              | Import plugin MCP servers into ACP shared MCP registry                     | Phase 2                                  |
+| `.github/copilot/settings.json` / `.claude/settings.json` | Partial          | Reuse plugin marketplace and enablement hints, not runtime agent semantics | Phase 2                                  |
+| plugin hooks                                              | Partial          | Future ACP policy runner only; do not execute in v1                        | Phase 3                                  |
+| plugin custom agents                                      | Partial          | Future metadata projection only; do not claim native compatibility in v1   | Phase 3                                  |
+| model picker / thinking effort                            | No direct import | Keep ACP model and mode options protocol-driven                            | Out of scope for config compatibility v1 |
 
 ## Phased Plan
 

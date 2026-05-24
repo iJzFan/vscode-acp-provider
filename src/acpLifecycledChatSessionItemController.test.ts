@@ -48,14 +48,21 @@ type MockChatSessionItem = {
   label: string;
   status?: number;
   changes?: unknown[];
-  timing?: { created: number; lastRequestStarted?: number; lastRequestEnded?: number };
+  timing?: {
+    created: number;
+    lastRequestStarted?: number;
+    lastRequestEnded?: number;
+  };
 };
 
 type MockController = {
   items: {
     replace: (items: MockChatSessionItem[]) => void;
   };
-  createChatSessionItem: (resource: MockUri, label: string) => MockChatSessionItem;
+  createChatSessionItem: (
+    resource: MockUri,
+    label: string,
+  ) => MockChatSessionItem;
   newChatSessionItemHandler?: (context: {
     request: { id: string; sessionResource?: MockUri; prompt: string };
   }) => Promise<MockChatSessionItem>;
@@ -159,7 +166,8 @@ suite("acpLifecycledChatSessionItemController", () => {
     const {
       createAcpChatSessionItemController,
       setChatSessionItemControllerVscodeForTesting,
-    } = require("./acpLifecycledChatSessionItemController") as typeof import("./acpLifecycledChatSessionItemController");
+    } =
+      require("./acpLifecycledChatSessionItemController") as typeof import("./acpLifecycledChatSessionItemController");
     setChatSessionItemControllerVscodeForTesting(mockVscode as any);
 
     const sessionChangeEmitter = new MockEventEmitter<{ modified: unknown }>();
@@ -237,7 +245,8 @@ suite("acpLifecycledChatSessionItemController", () => {
     const {
       createAcpChatSessionItemController,
       setChatSessionItemControllerVscodeForTesting,
-    } = require("./acpLifecycledChatSessionItemController") as typeof import("./acpLifecycledChatSessionItemController");
+    } =
+      require("./acpLifecycledChatSessionItemController") as typeof import("./acpLifecycledChatSessionItemController");
     setChatSessionItemControllerVscodeForTesting(mockVscode as any);
 
     const sessionChangeEmitter = new MockEventEmitter<{ modified: unknown }>();
@@ -305,7 +314,8 @@ suite("acpLifecycledChatSessionItemController", () => {
     const {
       createAcpChatSessionItemController,
       setChatSessionItemControllerVscodeForTesting,
-    } = require("./acpLifecycledChatSessionItemController") as typeof import("./acpLifecycledChatSessionItemController");
+    } =
+      require("./acpLifecycledChatSessionItemController") as typeof import("./acpLifecycledChatSessionItemController");
     setChatSessionItemControllerVscodeForTesting(mockVscode as any);
 
     const sessionChangeEmitter = new MockEventEmitter<{ modified: unknown }>();
@@ -369,7 +379,8 @@ suite("acpLifecycledChatSessionItemController", () => {
     const {
       createAcpChatSessionItemController,
       setChatSessionItemControllerVscodeForTesting,
-    } = require("./acpLifecycledChatSessionItemController") as typeof import("./acpLifecycledChatSessionItemController");
+    } =
+      require("./acpLifecycledChatSessionItemController") as typeof import("./acpLifecycledChatSessionItemController");
     setChatSessionItemControllerVscodeForTesting(mockVscode as any);
 
     const sessionChangeEmitter = new MockEventEmitter<{ modified: unknown }>();

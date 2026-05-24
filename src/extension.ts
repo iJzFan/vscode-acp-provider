@@ -17,7 +17,10 @@ import {
 } from "./chatDefaults";
 import { AgentRegistry } from "./agentRegistry";
 import { ACP_CHAT_SCHEME } from "./chatIdentifiers";
-import { AcpSessionManager, createAcpSessionManager } from "./acpSessionManager";
+import {
+  AcpSessionManager,
+  createAcpSessionManager,
+} from "./acpSessionManager";
 import { AcpChatParticipant } from "./acpChatParticipant";
 import { AcpChatSessionContentProvider } from "./acpChatSessionContentProvider";
 import {
@@ -167,7 +170,10 @@ function registerAgents(params: {
 
     // Try participantVariableProvider (chatParticipantAdditions proposed API)
     const participantAny = participantInstance as any;
-    if (typeof participantAny.participantVariableProvider !== "undefined" || "participantVariableProvider" in participantAny) {
+    if (
+      typeof participantAny.participantVariableProvider !== "undefined" ||
+      "participantVariableProvider" in participantAny
+    ) {
       participantAny.participantVariableProvider = {
         provider: participant.commandCompletionProvider,
         triggerCharacters: ["/"],
@@ -175,7 +181,10 @@ function registerAgents(params: {
       outputChannel.info(
         `[acp:${agent.id}] participantVariableProvider registered with trigger "/"`,
       );
-    } else if (typeof participantAny.commandProvider !== "undefined" || "commandProvider" in participantAny) {
+    } else if (
+      typeof participantAny.commandProvider !== "undefined" ||
+      "commandProvider" in participantAny
+    ) {
       participantAny.commandProvider = {
         provider: participant.commandCompletionProvider,
         triggerCharacters: ["/"],
@@ -185,7 +194,11 @@ function registerAgents(params: {
       );
     } else {
       outputChannel.info(
-        `[acp:${agent.id}] ChatParticipant available properties: ${Object.getOwnPropertyNames(participantAny).filter(k => typeof (participantAny as any)[k] !== "function").join(", ")}`,
+        `[acp:${agent.id}] ChatParticipant available properties: ${Object.getOwnPropertyNames(
+          participantAny,
+        )
+          .filter((k) => typeof (participantAny as any)[k] !== "function")
+          .join(", ")}`,
       );
       outputChannel.warn(
         `[acp:${agent.id}] No known completion provider property found on ChatParticipant; slash completions are disabled. Requires VS Code Insiders 1.120+ with chatParticipantAdditions proposed API.`,
@@ -218,9 +231,8 @@ function registerAgents(params: {
               // When no participant has been selected yet the session resource
               // is undefined — fall back to this provider's own agent so the
               // user still sees commands.
-              const activeSessionUri = (
-                vscode.chat as any
-              ).activeChatPanelSessionResource as vscode.Uri | undefined;
+              const activeSessionUri = (vscode.chat as any)
+                .activeChatPanelSessionResource as vscode.Uri | undefined;
               const useThisAgent =
                 !activeSessionUri ||
                 activeSessionUri.scheme.startsWith(ACP_CHAT_SCHEME);
@@ -242,7 +254,9 @@ function registerAgents(params: {
                   skill,
                   score: getSlashCommandMatchScore(skill.name, query),
                 }))
-                .filter(({ skill, score }) => !names.has(skill.name) && score > 0)
+                .filter(
+                  ({ skill, score }) => !names.has(skill.name) && score > 0,
+                )
                 .sort((left, right) => {
                   const scoreDiff = right.score - left.score;
                   return scoreDiff !== 0

@@ -1,3 +1,10 @@
+## [0.6.1] - 2026-05-25
+
+- Cleaned the public repository surface by removing stale investigation artifacts from the root and the legacy ACP diff review bundle.
+- Aligned release metadata with the Apache-2.0 license and added GitHub homepage, issue tracker, and contributor metadata to the extension manifest.
+- Refreshed the README for open-source contributors, added contribution/security/issue templates, and documented the core development workflow.
+- Added comments around the ACP client lifecycle, session identity model, and chat-history replay path to improve maintainability without changing runtime behavior.
+
 ## [0.6.0] - 2026-05-25
 
 - Downloaded and probed `formulahendry/acp-agent-monitor` plus `formulahendry/vscode-acp`; captured local OpenCode `1.15.7` and Auggie `0.28.0-prerelease.5` ACP initialize snapshots for compatibility checks.
@@ -107,11 +114,6 @@
 ## [0.4.12] - 2026-05-20
 
 - Fixed `writeTextFile` to use `WorkspaceEdit` + `save()` for open documents instead of `fs.writeFile`, eliminating "file content is newer" errors on subsequent save and preventing content reverts.
-
-## [0.4.11] - 2026-05-19
-
-- Fixed live ACP file-diff rendering so completed tool updates now push the `File edits` diff part during the active chat stream instead of only showing diffs when session history is rebuilt.
-- Kept diff rendering active after `externalEdit()` tool flows finish so file-edit tools that also report diff content no longer suppress the visible diff widget.
 
 ## [0.4.11] - 2026-05-19
 

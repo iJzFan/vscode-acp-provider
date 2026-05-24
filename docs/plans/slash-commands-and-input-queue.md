@@ -9,7 +9,7 @@ Implemented in `src/extension.ts`, `src/acpSessionManager.ts`, `src/acpChatParti
 ### Problem
 
 Currently the user must type `@opencode /command` to see slash command
-completions.  VS Code's `ChatParticipant.participantVariableProvider` only
+completions. VS Code's `ChatParticipant.participantVariableProvider` only
 fires **after** the participant is selected (i.e. after `@agent` is typed).
 There is no standard API for global slash completions that work before
 participant selection.
@@ -18,27 +18,28 @@ participant selection.
 
 Two parallel mechanisms, both already present:
 
-| Mechanism | Scope | Trigger | When it works |
-|---|---|---|---|
-| `participantVariableProvider` | Per participant | After `@agent` typed | Always (VS Code API) |
-| `CompletionItemProvider` (fallback) | Document scheme | `/` typed | Only if chat input has a supported scheme |
+| Mechanism                           | Scope           | Trigger              | When it works                             |
+| ----------------------------------- | --------------- | -------------------- | ----------------------------------------- |
+| `participantVariableProvider`       | Per participant | After `@agent` typed | Always (VS Code API)                      |
+| `CompletionItemProvider` (fallback) | Document scheme | `/` typed            | Only if chat input has a supported scheme |
 
 #### Fallback `CompletionItemProvider` Changes (`src/extension.ts`)
 
 Registered for known chat-editor document schemes:
+
 - `acp-{agentId}` — ACP session URI
 - `acp` — generic ACP scheme
 - `vscode-chat-editor` — VS Code chat editor view
 
 **Note:** whether VS Code's chat input widget exposes a `TextDocument` with
-one of these schemes is **not guaranteed**.  If it does not, the
+one of these schemes is **not guaranteed**. If it does not, the
 `CompletionItemProvider` fallback will not fire and the user will still need
-`@agent`.  This is a VS Code API limitation — there is no supported API for
+`@agent`. This is a VS Code API limitation — there is no supported API for
 global chat input completions.
 
 #### Agent Prefix Auto-Insertion (`src/extension.ts:230-233`)
 
-When the `CompletionItemProvider` *does* fire and the cursor text has no
+When the `CompletionItemProvider` _does_ fire and the cursor text has no
 `@mention` yet, the completion's `insertText` is prepended with
 `@{agentId}`:
 
@@ -52,7 +53,7 @@ This way the selected completion produces `@opencode /fix ` in the chat
 input, routing it to the correct ACP participant.
 
 **Uncertainty:** VS Code may handle `@` insertion in the chat input
-specially (participant picker).  This needs runtime testing.
+specially (participant picker). This needs runtime testing.
 
 ### Alternative If Fallback Does Not Work
 
@@ -71,7 +72,7 @@ requirement:
 
 When the user submits a new prompt while a previous one is still in flight,
 the current implementation **cancels** the in-flight request and starts the
-new one.  The user loses the in-progress work.
+new one. The user loses the in-progress work.
 
 ### Solution
 

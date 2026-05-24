@@ -34,17 +34,18 @@ Per-agent array alongside `mcpServers`:
 
 ### Path Expansion
 
-| Pattern | Expansion |
-|---------|-----------|
-| `~` prefix | `os.homedir()` (Windows: `%USERPROFILE%`) |
+| Pattern       | Expansion                                                                          |
+| ------------- | ---------------------------------------------------------------------------------- |
+| `~` prefix    | `os.homedir()` (Windows: `%USERPROFILE%`)                                          |
 | Relative path | Resolve against workspace root (`vscode.workspace.workspaceFolders[0].uri.fsPath`) |
-| Absolute path | Used as-is |
+| Absolute path | Used as-is                                                                         |
 
 ### Discovery Rules
 
 For each path in `skills[]`, scan for subdirectories matching skill naming rules, then read `<dir>/SKILL.md`.
 
 Standard Agent Skills discovery locations (also searched if configured):
+
 - `<path>/<name>/SKILL.md`
 
 Only directories matching `^[a-z0-9]+(-[a-z0-9]+)*$` are considered.
@@ -52,6 +53,7 @@ Only directories matching `^[a-z0-9]+(-[a-z0-9]+)*$` are considered.
 ### Parsed Fields
 
 From `SKILL.md` frontmatter (YAML):
+
 - `name` (required) — skill identifier, matches directory name
 - `description` (required) — what the skill does
 - All other fields ignored for completion purposes
@@ -69,21 +71,22 @@ function getCompletionItems(query: string): ChatCompletionItem[] {
   const skillNames = new Set<string>();
 
   // Skills deduplicated: ACP command wins on name conflict
-  const skills = getDiscoveredSkills()
-    .filter(skill => !acpCommands.some(cmd => cmd.name === skill.name));
+  const skills = getDiscoveredSkills().filter(
+    (skill) => !acpCommands.some((cmd) => cmd.name === skill.name),
+  );
 
   return [...skills, ...acpCommands]
-    .filter(item => matchesQuery(item.name, query))
+    .filter((item) => matchesQuery(item.name, query))
     .map(toCompletionItem);
 }
 ```
 
 ### Completion Item Mapping
 
-| Source | `name` | `insertText` | `icon` |
-|--------|--------|--------------|--------|
-| ACP command | ACP name | `/<name> ` | `$(terminal-cmd)` |
-| Skill | Skill name | `/<name> ` | `$(book)` |
+| Source      | `name`     | `insertText` | `icon`            |
+| ----------- | ---------- | ------------ | ----------------- |
+| ACP command | ACP name   | `/<name> `   | `$(terminal-cmd)` |
+| Skill       | Skill name | `/<name> `   | `$(book)`         |
 
 `detail` = description from source. `documentation` = description + hint (for ACP commands).
 
@@ -99,17 +102,17 @@ function getCompletionItems(query: string): ChatCompletionItem[] {
 
 ## 5. Files to Modify
 
-| File | Change |
-|------|--------|
-| `src/types.ts` | Add `skillPaths?: string[]` to agent config type |
-| `src/acpSessionManager.ts` | Add skill discovery + storage; merge into `getKnownAvailableCommands()` |
-| `src/acpChatParticipant.ts` | Update `provideCommandCompletionItems` icon/style for skill items |
-| `src/agentRegistry.ts` | Read `skills` from agent config |
+| File                        | Change                                                                  |
+| --------------------------- | ----------------------------------------------------------------------- |
+| `src/types.ts`              | Add `skillPaths?: string[]` to agent config type                        |
+| `src/acpSessionManager.ts`  | Add skill discovery + storage; merge into `getKnownAvailableCommands()` |
+| `src/acpChatParticipant.ts` | Update `provideCommandCompletionItems` icon/style for skill items       |
+| `src/agentRegistry.ts`      | Read `skills` from agent config                                         |
 
 ### New File
 
-| File | Responsibility |
-|------|----------------|
+| File                    | Responsibility                                                                                                         |
+| ----------------------- | ---------------------------------------------------------------------------------------------------------------------- |
 | `src/skillDiscovery.ts` | `scanSkillDirectories(paths: string[]): ScannedSkill[]` — expands paths, walks filesystem, parses SKILL.md frontmatter |
 
 ### Types (`src/types.ts`)
@@ -126,10 +129,10 @@ export interface ScannedSkill {
 
 ## 6. Open Questions (Resolved)
 
-| Question | Answer |
-|----------|--------|
-| Skill vs ACP command behavior on select? | Same as today — pure `insertText` |
-| Name conflict resolution? | ACP command wins, skill hidden |
-| Scan timing? | Each session create/open |
-| Path expansion? | `~` → homedir, relative → workspace root |
-| Config location? | Per-agent `skills[]` alongside `mcpServers` |
+| Question                                 | Answer                                      |
+| ---------------------------------------- | ------------------------------------------- |
+| Skill vs ACP command behavior on select? | Same as today — pure `insertText`           |
+| Name conflict resolution?                | ACP command wins, skill hidden              |
+| Scan timing?                             | Each session create/open                    |
+| Path expansion?                          | `~` → homedir, relative → workspace root    |
+| Config location?                         | Per-agent `skills[]` alongside `mcpServers` |

@@ -1,0 +1,64 @@
+name: Bug report
+description: Report a reproducible problem in VS Code ACP Client
+title: "Bug: "
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: Thanks for reporting a bug. Please remove secrets and private workspace data from logs.
+  - type: input
+    id: extension-version
+    attributes:
+      label: Extension version
+      placeholder: 0.6.1
+    validations:
+      required: true
+  - type: input
+    id: vscode-version
+    attributes:
+      label: VS Code Insiders version
+      placeholder: 1.120.0-insider
+    validations:
+      required: true
+  - type: input
+    id: agent
+    attributes:
+      label: ACP agent
+      placeholder: OpenCode, Codex, Cagent, Gemini CLI, Claude Code, Auggie, Mistral Vibe, Copilot, or custom
+    validations:
+      required: true
+  - type: dropdown
+    id: os
+    attributes:
+      label: Operating system
+      options:
+        - Windows
+        - macOS
+        - Linux
+        - Other
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: Describe the smallest reproducible scenario.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Sanitized logs or screenshots
+      description: Include only sanitized ACP Client output or screenshots. Do not include secrets.

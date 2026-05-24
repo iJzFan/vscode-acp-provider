@@ -24,7 +24,9 @@ export function buildStructuredCommandPrompt(params: {
     commandName = normalizeCommandToken(explicitCommand);
     commandArgs = trimmedPrompt || undefined;
   } else if (trimmedPrompt) {
-    const match = trimmedPrompt.match(/^(?<token>(?:\.\/|\/)[^\s]+)(?:\s+(?<args>[\s\S]*))?$/);
+    const match = trimmedPrompt.match(
+      /^(?<token>(?:\.\/|\/)[^\s]+)(?:\s+(?<args>[\s\S]*))?$/,
+    );
     const token = match?.groups?.token;
     if (!token) {
       return undefined;

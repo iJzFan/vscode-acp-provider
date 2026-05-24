@@ -1,0 +1,29 @@
+name: Feature request
+description: Suggest an improvement for VS Code ACP Client
+title: "Feature: "
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What workflow or limitation should this improve?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed solution
+      description: Describe the behavior you want.
+    validations:
+      required: true
+  - type: input
+    id: agent
+    attributes:
+      label: Relevant ACP agent or protocol area
+      placeholder: Optional
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      placeholder: Optional
