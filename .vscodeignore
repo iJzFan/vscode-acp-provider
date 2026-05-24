@@ -34,3 +34,4 @@ node_modules/**/doc/**
 node_modules/**/docs/**
 node_modules/**/example/**
 node_modules/**/examples/**
+.*/
