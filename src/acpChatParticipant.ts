@@ -354,6 +354,10 @@ export class AcpChatParticipant extends DisposableBase {
       if (pending?.cancellation === cancellation) {
         pending.permissionContext?.dispose();
       }
+      if (session.status !== vscode.ChatSessionStatus.Completed) {
+        session.markAsCompleted();
+        void this.sessionManager.syncSessionState(sessionResource, session);
+      }
     });
 
     try {
@@ -408,6 +412,14 @@ export class AcpChatParticipant extends DisposableBase {
         `> **Error:** ACP request failed. ${extractReadableErrorMessage(error)}`,
       );
     } finally {
+      if (
+        token.isCancellationRequested &&
+        session.status !== vscode.ChatSessionStatus.Completed
+      ) {
+        session.markAsCompleted();
+        await this.sessionManager.syncSessionState(sessionResource, session);
+      }
+
       session.pendingRequest?.permissionContext?.dispose();
       session.pendingRequest = undefined;
       this.currentToolInvocationToken = undefined;
@@ -1296,7 +1308,7 @@ export class AcpChatParticipant extends DisposableBase {
     update: ToolCall | ToolCallUpdate,
     info: ToolInfo,
   ): void {
-    const touchedFiles = this.getToolRelatedPaths(update);
+    const touchedFiles = this.getToolRelatedPaths(update, info);
     if (!touchedFiles.length) {
       return;
     }
@@ -1312,8 +1324,15 @@ export class AcpChatParticipant extends DisposableBase {
     response.markdown(`**${title}:** ${fileList}${suffix}\n\n`);
   }
 
-  private getToolRelatedPaths(update: ToolCall | ToolCallUpdate): string[] {
+  private getToolRelatedPaths(
+    update: ToolCall | ToolCallUpdate,
+    info?: ToolInfo,
+  ): string[] {
     const paths = new Set<string>();
+
+    for (const resource of info?.resources ?? []) {
+      paths.add(this.formatUri(resource));
+    }
 
     for (const location of update.locations ?? []) {
       paths.add(this.toDisplayPath(location.path));

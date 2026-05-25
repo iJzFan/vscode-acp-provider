@@ -23,6 +23,7 @@ import {
 } from "./acpSessionManager";
 import { AcpChatParticipant } from "./acpChatParticipant";
 import { AcpChatSessionContentProvider } from "./acpChatSessionContentProvider";
+import { registerChatSessionDisposalCleanup } from "./chatSessionDisposal";
 import {
   buildSlashCommandFilterText,
   formatCommandSourceBadge,
@@ -74,12 +75,19 @@ export async function activate(context: vscode.ExtensionContext) {
   context.subscriptions.push(sessionDb);
 
   const agentRegistry = new AgentRegistry();
-  registerAgents({
+  const managers = registerAgents({
     registry: agentRegistry,
     sessionDb,
     outputChannel,
     context,
   });
+  const chatSessionDisposalCleanup = registerChatSessionDisposalCleanup(
+    managers,
+    outputChannel,
+  );
+  if (chatSessionDisposalCleanup) {
+    context.subscriptions.push(chatSessionDisposalCleanup);
+  }
   // register a default model provider when ai features are disabled
   if (!isCopilotAvailable()) {
     const defaultLmProvider = new DefaultLanguageModelProvider();

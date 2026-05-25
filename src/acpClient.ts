@@ -172,6 +172,7 @@ class AcpClientImpl extends DisposableBase implements AcpClient {
   private supportedModelState: SessionModelState | null = null;
   private supportedModeState: SessionModeState | null = null;
   private configOptions: SessionConfigOption[] = [];
+  private readonly inFlightPromptRequestIds = new Map<string, RequestId>();
 
   private readonly onSessionUpdateEmitter = this._register(
     new vscode.EventEmitter<SessionNotification>(),
@@ -332,16 +333,22 @@ class AcpClientImpl extends DisposableBase implements AcpClient {
     if (!this.connection) {
       throw new Error("ACP connection is not ready");
     }
-    return this.connection.prompt({
-      sessionId,
-      prompt,
-    });
+    try {
+      return await this.connection.prompt({
+        sessionId,
+        prompt,
+      });
+    } finally {
+      this.inFlightPromptRequestIds.delete(sessionId);
+    }
   }
 
   async cancel(sessionId: string, requestId?: RequestId): Promise<void> {
+    const resolvedRequestId =
+      requestId ?? this.inFlightPromptRequestIds.get(sessionId);
     await sendSessionCancel(this.connection, {
       sessionId,
-      requestId,
+      requestId: resolvedRequestId,
       agentId: this.agent.id,
       logChannel: this.logChannel,
     });
@@ -636,7 +643,10 @@ class AcpClientImpl extends DisposableBase implements AcpClient {
     if (!stdinStream || !stdoutStream) {
       throw new Error("Failed to connect ACP client streams");
     }
-    const stream = ndJsonStream(stdinStream, stdoutStream);
+    const stream = createTrackedMessageStream(
+      ndJsonStream(stdinStream, stdoutStream),
+      (message) => trackOutgoingPromptRequest(message, this.inFlightPromptRequestIds),
+    );
     this.connection = new ClientSideConnection(() => this, stream);
 
     // Initialize immediately after the ndjson bridge is ready. The response is
@@ -674,7 +684,73 @@ class AcpClientImpl extends DisposableBase implements AcpClient {
     this.agentProcess = null;
     this.connection = null;
     this.readyPromise = null;
+    this.inFlightPromptRequestIds.clear();
   }
+}
+
+export function trackOutgoingPromptRequest(
+  message: unknown,
+  inFlightPromptRequestIds: Map<string, RequestId>,
+): void {
+  if (!message || typeof message !== "object") {
+    return;
+  }
+
+  const candidate = message as {
+    id?: unknown;
+    method?: unknown;
+    params?: { sessionId?: unknown };
+  };
+
+  if (candidate.method !== "session/prompt") {
+    return;
+  }
+
+  if (typeof candidate.params?.sessionId !== "string") {
+    return;
+  }
+
+  if (!isRequestId(candidate.id)) {
+    return;
+  }
+
+  inFlightPromptRequestIds.set(candidate.params.sessionId, candidate.id);
+}
+
+function isRequestId(value: unknown): value is RequestId {
+  return value === null || typeof value === "string" || typeof value === "number";
+}
+
+function createTrackedMessageStream<T extends { writable: WritableStream<unknown> }>(
+  stream: T,
+  onOutgoingMessage: (message: unknown) => void,
+): T {
+  const writable = stream.writable;
+  return {
+    ...stream,
+    writable: new WritableStream<unknown>({
+      async write(chunk) {
+        onOutgoingMessage(chunk);
+        const writer = writable.getWriter();
+        try {
+          await writer.write(chunk);
+        } finally {
+          writer.releaseLock();
+        }
+      },
+      async close() {
+        const writer = writable.getWriter();
+        try {
+          await writer.close();
+        } finally {
+          writer.releaseLock();
+        }
+      },
+      async abort(reason) {
+        await writable.abort(reason);
+      },
+    }),
+  };
 }
 
 function serializeMcpServers(

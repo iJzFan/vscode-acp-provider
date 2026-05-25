@@ -41,6 +41,35 @@ teardown(() => {
 });
 
 suite("acpClient cancel", () => {
+  test("tracks outgoing session prompt request ids for later cancellation", async () => {
+    const { trackOutgoingPromptRequest } =
+      require("./acpClient") as typeof import("./acpClient");
+    const trackedIds = new Map<string, string | number | null>();
+
+    trackOutgoingPromptRequest(
+      {
+        jsonrpc: "2.0",
+        id: 7,
+        method: "session/prompt",
+        params: { sessionId: "session-7", prompt: [] },
+      },
+      trackedIds as any,
+    );
+
+    trackOutgoingPromptRequest(
+      {
+        jsonrpc: "2.0",
+        id: 8,
+        method: "session/load",
+        params: { sessionId: "session-8" },
+      },
+      trackedIds as any,
+    );
+
+    assert.equal(trackedIds.get("session-7"), 7);
+    assert.equal(trackedIds.has("session-8"), false);
+  });
+
   test("skips protocol cancel when no ACP request id is available", async () => {
     const { sendSessionCancel } =
       require("./acpClient") as typeof import("./acpClient");

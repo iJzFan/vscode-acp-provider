@@ -111,6 +111,42 @@ const mockVscode = {
     Failed: 3,
     NeedsInput: 4,
   },
+  CancellationTokenSource: class {
+    private _isCancelled = false;
+    private listeners: Array<() => void> = [];
+    readonly token: {
+      readonly isCancellationRequested: boolean;
+      onCancellationRequested: (listener: () => void) => MockDisposable;
+    };
+
+    constructor() {
+      const owner = this;
+      this.token = {
+        get isCancellationRequested() {
+          return owner._isCancelled;
+        },
+        onCancellationRequested: (listener: () => void) => {
+          owner.listeners.push(listener);
+          return new MockDisposable(() => {
+            owner.listeners = owner.listeners.filter(
+              (entry) => entry !== listener,
+            );
+          });
+        },
+      };
+    }
+
+    cancel(): void {
+      this._isCancelled = true;
+      for (const listener of [...this.listeners]) {
+        listener();
+      }
+    }
+
+    dispose(): void {
+      this.listeners = [];
+    }
+  },
   workspace: {
     workspaceFolders: [{ uri: MockUri.file("/workspace") }],
     asRelativePath: (uri: MockUri) => uri.fsPath.replace(/^\/workspace\/?/, ""),
@@ -174,15 +210,21 @@ function installMockVscode(): void {
   };
 }
 
-function createParticipant(logger: { warn: (message: string) => void }) {
+function createParticipant(
+  logger: { warn: (message: string) => void },
+  sessionManager: Record<string, unknown> = {
+    getKnownAvailableCommands: () => [],
+    getDiscoveredSkills: () => [],
+  },
+  permissionManager: Record<string, unknown> = {
+    bindSessionResponse: () => new MockDisposable(),
+  },
+) {
   const { AcpChatParticipant } =
     require("./acpChatParticipant") as typeof import("./acpChatParticipant");
   return new AcpChatParticipant(
-    {} as any,
-    {
-      getKnownAvailableCommands: () => [],
-      getDiscoveredSkills: () => [],
-    } as any,
+    permissionManager as any,
+    sessionManager as any,
     {
       warn: logger.warn,
       error: () => void 0,
@@ -196,6 +238,28 @@ function createParticipant(logger: { warn: (message: string) => void }) {
 
 const activeToken = { isCancellationRequested: false };
 const toolInvocationToken = { opaque: true };
+
+function createCancellationToken() {
+  let isCancellationRequested = false;
+  let listeners: Array<() => void> = [];
+  return {
+    get isCancellationRequested() {
+      return isCancellationRequested;
+    },
+    onCancellationRequested(listener: () => void) {
+      listeners.push(listener);
+      return new MockDisposable(() => {
+        listeners = listeners.filter((entry) => entry !== listener);
+      });
+    },
+    cancel() {
+      isCancellationRequested = true;
+      for (const listener of [...listeners]) {
+        listener();
+      }
+    },
+  };
+}
 
 setup(() => {
   mockVscode.lm.tools = [];
@@ -330,6 +394,185 @@ suite("acpChatParticipant tool attachments", () => {
     assert.equal(blocks[1].text, "Tool reference (copilot_searchCodebase) [3, 9]");
     assert.equal(warnings.length, 1);
     assert.match(warnings[0], /Failed to resolve tool attachment copilot_searchCodebase/);
+
+    participant.dispose();
+  });
+});
+
+suite("acpChatParticipant cancellation", () => {
+  test("marks a cancelled in-flight request as completed so the session can continue", async () => {
+    const sessionUpdateEmitter = new MockEventEmitter<unknown>();
+    const syncStatuses: number[] = [];
+    const cancelCalls: string[] = [];
+    let resolvePrompt: ((result: { stopReason: string }) => void) | undefined;
+    let resolvePromptStarted: (() => void) | undefined;
+    let signalNextCalls = 0;
+    let status = mockVscode.ChatSessionStatus.Completed;
+    const promptStarted = new Promise<void>((resolve) => {
+      resolvePromptStarted = resolve;
+    });
+
+    const session = {
+      acpSessionId: "session-1",
+      title: "Session 1",
+      vscodeResource: MockUri.parse("acp-agent:/session-1"),
+      agent: { id: "agent" },
+      cwd: "/workspace",
+      defaultChatOptions: { modeId: "", modelId: "" },
+      pendingRequest: undefined as unknown,
+      client: {
+        onSessionUpdate: sessionUpdateEmitter.event,
+        prompt: async () => {
+          resolvePromptStarted?.();
+          return await new Promise<{ stopReason: string }>((resolve) => {
+            resolvePrompt = resolve;
+          });
+        },
+        cancel: async (sessionId: string) => {
+          cancelCalls.push(sessionId);
+        },
+        getConfigOptions: () => [],
+      },
+      get queueLength() {
+        return 0;
+      },
+      async waitForTurn() {
+        return;
+      },
+      signalNext() {
+        signalNextCalls += 1;
+      },
+      markAsInProgress() {
+        status = mockVscode.ChatSessionStatus.InProgress;
+      },
+      markAsCompleted() {
+        status = mockVscode.ChatSessionStatus.Completed;
+      },
+      markAsFailed() {
+        status = mockVscode.ChatSessionStatus.Failed;
+      },
+      markAsNeedsInput() {
+        status = mockVscode.ChatSessionStatus.NeedsInput;
+      },
+      get status() {
+        return status;
+      },
+    };
+
+    const sessionManager = {
+      getKnownAvailableCommands: () => [],
+      getDiscoveredSkills: () => [],
+      getActive: () => session,
+      createOrGet: async () => ({ session }),
+      syncSessionState: async (_resource: unknown, modified: { status: number }) => {
+        syncStatuses.push(modified.status);
+      },
+      getCumulativeToolDiffArtifacts: () => [],
+    };
+
+    installMockVscode();
+    clearAcpChatParticipantModules();
+    const participant = createParticipant(
+      { warn: () => void 0 },
+      sessionManager,
+      { bindSessionResponse: () => new MockDisposable() },
+    );
+
+    const token = createCancellationToken();
+    const requestHandler = (participant as any).requestHandler as Function;
+    const handlerPromise = requestHandler(
+      {
+        prompt: "continue this session",
+        command: undefined,
+        references: [],
+        toolReferences: [],
+      },
+      {
+        chatSessionContext: {
+          chatSessionItem: { resource: session.vscodeResource },
+          isUntitled: false,
+        },
+      },
+      {
+        markdown: () => void 0,
+        push: () => void 0,
+        button: () => void 0,
+        progress: () => void 0,
+        updateToolInvocation: () => void 0,
+      },
+      token as any,
+    );
+
+    await promptStarted;
+    token.cancel();
+    resolvePrompt?.({ stopReason: "cancelled" });
+    await handlerPromise;
+
+    assert.deepEqual(syncStatuses, [1, 2]);
+    assert.deepEqual(cancelCalls, ["session-1"]);
+    assert.equal(session.status, mockVscode.ChatSessionStatus.Completed);
+    assert.equal(signalNextCalls, 1);
+
+    participant.dispose();
+  });
+});
+
+suite("acpChatParticipant diff target discovery", () => {
+  test("keeps completed edit command paths available for live diff tracking", () => {
+    installMockVscode();
+    clearAcpChatParticipantModules();
+    const participant = createParticipant({ warn: () => void 0 });
+    const { getToolInfo } = require("./chatRenderingUtils") as typeof import("./chatRenderingUtils");
+
+    const update = {
+      toolCallId: "tool-diff-1",
+      title: "apply_patch",
+      kind: "edit",
+      status: "completed",
+      rawInput: {
+        command: ["apply_patch", "src/command-target.ts"],
+      },
+      rawOutput: {
+        output: "Success. File patched",
+      },
+    };
+
+    const info = getToolInfo(update as never);
+    const targets = (participant as any).getToolDiffTargetUris(info, update);
+
+    assert.equal(targets.length, 1);
+    assert.equal(targets[0].fsPath, "/workspace/src/command-target.ts");
+
+    participant.dispose();
+  });
+
+  test("finds metadata-only file resources for created files", () => {
+    installMockVscode();
+    clearAcpChatParticipantModules();
+    const participant = createParticipant({ warn: () => void 0 });
+    const { getToolInfo } = require("./chatRenderingUtils") as typeof import("./chatRenderingUtils");
+
+    const update = {
+      toolCallId: "tool-diff-2",
+      title: "writeTextFile",
+      kind: "edit",
+      status: "completed",
+      rawOutput: {
+        metadata: {
+          files: [
+            {
+              relativePath: "src/created-from-metadata.ts",
+            },
+          ],
+        },
+      },
+    };
+
+    const info = getToolInfo(update as never);
+    const targets = (participant as any).getToolDiffTargetUris(info, update);
+
+    assert.equal(targets.length, 1);
+    assert.equal(targets[0].fsPath, "/workspace/src/created-from-metadata.ts");
 
     participant.dispose();
   });

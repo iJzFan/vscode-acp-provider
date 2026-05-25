@@ -143,6 +143,63 @@ suite("chatRenderingUtils", () => {
     );
   });
 
+  test("getToolInfo includes raw command paths on completed edit updates", () => {
+    const info = chatRenderingUtils.getToolInfo({
+      toolCallId: "tool-1b",
+      title: "apply_patch",
+      kind: "edit",
+      status: "completed",
+      rawInput: {
+        command: ["apply_patch", "src/new-command.ts", "--dry-run"],
+      },
+      rawOutput: {
+        output: "Success. File patched",
+      },
+    } as never);
+
+    assert.equal(info.resources?.length, 1);
+    assert.equal(
+      info.resources?.[0].fsPath,
+      path.join(
+        path.resolve(path.join("C:", "workspace")),
+        "src",
+        "new-command.ts",
+      ),
+    );
+  });
+
+  test("getToolInfo includes raw path fields and metadata file resources", () => {
+    const workspaceRoot = path.resolve(path.join("C:", "workspace"));
+    const info = chatRenderingUtils.getToolInfo({
+      toolCallId: "tool-1c",
+      title: "writeTextFile",
+      kind: "edit",
+      status: "completed",
+      rawInput: {
+        filePath: "src/direct-write.ts",
+      },
+      rawOutput: {
+        metadata: {
+          files: [
+            {
+              relativePath: "src/from-metadata.ts",
+            },
+            {
+              filePath: path.join(workspaceRoot, "src", "from-absolute.ts"),
+            },
+          ],
+        },
+      },
+    } as never);
+
+    const resourcePaths = (info.resources ?? []).map((resource) => resource.fsPath);
+    assert.deepEqual(resourcePaths.sort(), [
+      path.join(workspaceRoot, "src", "direct-write.ts"),
+      path.join(workspaceRoot, "src", "from-absolute.ts"),
+      path.join(workspaceRoot, "src", "from-metadata.ts"),
+    ]);
+  });
+
   test("getToolInfo preserves PowerShell CLIXML details instead of truncating them", () => {
     const info = chatRenderingUtils.getToolInfo({
       toolCallId: "tool-2",

@@ -1,3 +1,21 @@
+## [0.7.5] - 2026-05-25
+
+- Fixed ACP diff target discovery so completed edit tools still surface diffs when file paths only exist in `rawInput.command`, `filePath`/`path`/`uri`, or `rawOutput.metadata.files`.
+- Restored new-file diff visibility for agents that create files without emitting a standard diff block, allowing the live workspace snapshot fallback to pick those files up reliably.
+- Added regression coverage for completed edit command-path tracking, metadata-only file discovery, and the expanded editable-resource extraction path.
+
+## [0.7.4] - 2026-05-25
+
+- Fixed chat-session disposal cleanup so closing an ACP chat tab now tears down the matching per-session ACP client without reintroducing the old untitled-session replacement bug.
+- Ignored stale pre-commit untitled resources during disposal so `untitled -> named` chat-session migration no longer kills the newly committed live ACP session.
+- Added regression coverage for disposal cleanup routing and stale-resource session shutdown guards.
+
+## [0.7.3] - 2026-05-25
+
+- Fixed ACP session isolation so each live/restored chat session now owns its own ACP client lifecycle instead of all sessions under one agent sharing a single process.
+- Fixed multi-session switching regressions where opening or restoring one session could invalidate unrelated active sessions when the ACP client had to restart in a different startup mode.
+- Added regression coverage ensuring a stopped/restored session only invalidates its own live state and no longer clears sibling sessions.
+
 ## [0.7.2] - 2026-05-25
 
 - Fixed ACP tool lifecycle chat text to render both the tool name and tool kind in normal user-facing copy (for example `Tool started: planner (other)`) instead of either dumping raw debug fields or omitting those details.

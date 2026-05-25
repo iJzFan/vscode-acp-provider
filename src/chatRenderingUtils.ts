@@ -444,6 +444,17 @@ export function getToolInfo(
     resources.set(resource.toString(), resource);
   }
 
+  collectToolResourcesFromPayload(
+    toolCallUpdate.rawInput,
+    resources,
+    workspaceRoot,
+  );
+  collectToolResourcesFromPayload(
+    toolCallUpdate.rawOutput,
+    resources,
+    workspaceRoot,
+  );
+
   if (resources.size > 0) {
     response.resources = Array.from(resources.values());
   }
@@ -455,6 +466,15 @@ type ToolCommandPayload = {
   command?: unknown;
   filePath?: unknown;
   path?: unknown;
+  uri?: unknown;
+  metadata?: unknown;
+};
+
+type ToolMetadataFilePayload = {
+  filePath?: unknown;
+  relativePath?: unknown;
+  path?: unknown;
+  uri?: unknown;
 };
 
 function getCommandLine(raw: unknown): string | undefined {
@@ -481,14 +501,90 @@ function getPathInput(raw: unknown): string | undefined {
     return undefined;
   }
 
-  const { filePath, path } = raw as ToolCommandPayload;
-  const candidate = typeof filePath === "string" ? filePath : path;
+  const { filePath, path, uri } = raw as ToolCommandPayload;
+  const candidate =
+    typeof filePath === "string"
+      ? filePath
+      : typeof path === "string"
+        ? path
+        : uri;
   if (typeof candidate !== "string") {
     return undefined;
   }
 
   const normalized = candidate.trim();
   return normalized || undefined;
+}
+
+function looksLikeFilePathArgument(value: string): boolean {
+  return Boolean(value) && !value.startsWith("-") && /[\\/]/.test(value);
+}
+
+function addResolvedToolResource(
+  resources: Map<string, vscode.Uri>,
+  rawPath: unknown,
+  workspaceRoot: vscode.Uri | undefined,
+): void {
+  if (typeof rawPath !== "string") {
+    return;
+  }
+
+  const normalized = rawPath.trim();
+  if (!normalized) {
+    return;
+  }
+
+  try {
+    const resource = resolveUri(normalized, workspaceRoot);
+    resources.set(resource.toString(), resource);
+  } catch {
+    // Ignore malformed tool payloads so chat rendering can keep going.
+  }
+}
+
+function collectToolResourcesFromPayload(
+  raw: unknown,
+  resources: Map<string, vscode.Uri>,
+  workspaceRoot: vscode.Uri | undefined,
+): void {
+  if (!raw || typeof raw !== "object") {
+    return;
+  }
+
+  const payload = raw as ToolCommandPayload;
+  addResolvedToolResource(resources, payload.filePath, workspaceRoot);
+  addResolvedToolResource(resources, payload.path, workspaceRoot);
+  addResolvedToolResource(resources, payload.uri, workspaceRoot);
+
+  if (Array.isArray(payload.command)) {
+    for (const part of payload.command.slice(1)) {
+      if (typeof part === "string" && looksLikeFilePathArgument(part)) {
+        addResolvedToolResource(resources, part, workspaceRoot);
+      }
+    }
+  }
+
+  const metadata = payload.metadata;
+  if (!metadata || typeof metadata !== "object") {
+    return;
+  }
+
+  const files = (metadata as { files?: unknown }).files;
+  if (!Array.isArray(files)) {
+    return;
+  }
+
+  for (const file of files) {
+    if (!file || typeof file !== "object") {
+      continue;
+    }
+
+    const entry = file as ToolMetadataFilePayload;
+    addResolvedToolResource(resources, entry.filePath, workspaceRoot);
+    addResolvedToolResource(resources, entry.relativePath, workspaceRoot);
+    addResolvedToolResource(resources, entry.path, workspaceRoot);
+    addResolvedToolResource(resources, entry.uri, workspaceRoot);
+  }
 }
 
 function getToolInputText(raw: unknown): string | undefined {

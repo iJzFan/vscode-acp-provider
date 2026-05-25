@@ -573,4 +573,222 @@ suite("acpSessionManager", () => {
     setPermittedPathsVscodeForTesting(undefined);
     setSessionManagerVscodeForTesting(undefined);
   });
+
+  test("ignores stale untitled resources after a session is committed to its named URI", async () => {
+    const { createAcpSessionManager, setSessionManagerVscodeForTesting } =
+      require("./acpSessionManager") as typeof import("./acpSessionManager");
+    const { setPermittedPathsVscodeForTesting } =
+      require("./permittedPaths") as typeof import("./permittedPaths");
+    setSessionManagerVscodeForTesting(mockVscode as any);
+    setPermittedPathsVscodeForTesting(mockVscode as any);
+
+    const stopEmitter = new MockEventEmitter<void>();
+    const sessionUpdateEmitter = new MockEventEmitter<unknown>();
+    const optionsChangedEmitter = new MockEventEmitter<void>();
+    const dataChangedEmitter = new MockEventEmitter<void>();
+    let disposeCalls = 0;
+
+    const client = {
+      onSessionUpdate: sessionUpdateEmitter.event,
+      onDidStop: stopEmitter.event,
+      onDidStart: new MockEventEmitter<void>().event,
+      onDidOptionsChanged: optionsChangedEmitter.event,
+      getCapabilities: () => ({}),
+      createSession: async () => ({
+        sessionId: "session-1",
+        modes: null,
+        models: null,
+        configOptions: [],
+      }),
+      getSupportedModeState: () => null,
+      getSupportedModelState: () => null,
+      getConfigOptions: () => [],
+      dispose: async () => {
+        disposeCalls += 1;
+      },
+    };
+
+    const sessionDb = {
+      onDataChanged: dataChangedEmitter.event,
+      listSessions: async () => [],
+    };
+
+    const logger = {
+      info: () => void 0,
+      warn: () => void 0,
+      error: () => void 0,
+      debug: () => void 0,
+    };
+
+    const agent = {
+      id: "auggie",
+      label: "Auggie",
+      command: "auggie",
+      args: [],
+      enabled: true,
+      mcpServers: [],
+      manualCommands: [],
+      skillPaths: [],
+      defaultMode: undefined,
+      defaultModel: undefined,
+      defaultThinkingEffort: undefined,
+    };
+
+    const manager = createAcpSessionManager(
+      sessionDb as any,
+      agent as any,
+      {} as any,
+      logger as any,
+      () => client as any,
+    );
+
+    const untitledResource = MockUri.parse("acp-auggie:/untitled-1") as any;
+    const result = await manager.createOrGet(untitledResource);
+    const namedResource = manager.createSessionUri(result.session);
+
+    assert.equal(manager.closeSession(untitledResource), false);
+    const resumed = await manager.createOrGet(namedResource);
+    assert.equal(resumed.session.acpSessionId, "session-1");
+    assert.equal(disposeCalls, 0);
+
+    assert.equal(manager.closeSession(namedResource), true);
+    assert.equal(manager.getActive(namedResource), undefined);
+    assert.equal(disposeCalls, 1);
+
+    manager.dispose();
+    setPermittedPathsVscodeForTesting(undefined);
+    setSessionManagerVscodeForTesting(undefined);
+  });
+
+  test("isolates active sessions so one client stop does not invalidate another session", async () => {
+    const { createAcpSessionManager, setSessionManagerVscodeForTesting } =
+      require("./acpSessionManager") as typeof import("./acpSessionManager");
+    const { setPermittedPathsVscodeForTesting } =
+      require("./permittedPaths") as typeof import("./permittedPaths");
+    setSessionManagerVscodeForTesting(mockVscode as any);
+    setPermittedPathsVscodeForTesting(mockVscode as any);
+
+    const dataChangedEmitter = new MockEventEmitter<void>();
+    let createSessionCalls = 0;
+    let loadSessionCalls = 0;
+    const createdClients: Array<{
+      stopEmitter: MockEventEmitter<void>;
+      client: Record<string, unknown>;
+    }> = [];
+
+    const createClient = () => {
+      const stopEmitter = new MockEventEmitter<void>();
+      const sessionUpdateEmitter = new MockEventEmitter<unknown>();
+      const optionsChangedEmitter = new MockEventEmitter<void>();
+      const client = {
+        onSessionUpdate: sessionUpdateEmitter.event,
+        onDidStop: stopEmitter.event,
+        onDidStart: new MockEventEmitter<void>().event,
+        onDidOptionsChanged: optionsChangedEmitter.event,
+        getCapabilities: () => ({}),
+        createSession: async () => {
+          createSessionCalls += 1;
+          return {
+            sessionId: `session-${createSessionCalls}`,
+            modes: null,
+            models: null,
+            configOptions: [],
+          };
+        },
+        getSupportedModelState: () => null,
+        getSupportedModeState: () => null,
+        loadSession: async (sessionId: string) => {
+          loadSessionCalls += 1;
+          return {
+            modeId: "build",
+            modelId: "model-a",
+            notifications: [],
+            sessionId,
+          };
+        },
+        prompt: async () => ({ stopReason: "end_turn" }),
+        cancel: async () => void 0,
+        changeMode: async () => void 0,
+        changeModel: async () => void 0,
+        setThink: async () => ({
+          success: true,
+          currentThinkEnabled: false,
+        }),
+        setSessionConfigOption: async () => void 0,
+        getConfigOptions: () => [],
+        sendQuestionAnswers: async () => void 0,
+        listNativeSessions: async () => ({ sessions: [] }),
+        readTextFile: async () => ({ content: "" }),
+        writeTextFile: async () => void 0,
+        dispose: () => void 0,
+      };
+      createdClients.push({ stopEmitter, client });
+      return client;
+    };
+
+    const sessionDb = {
+      onDataChanged: dataChangedEmitter.event,
+      listSessions: async () => [
+        {
+          sessionId: "saved-1",
+          cwd: "/workspace",
+          title: "Saved 1",
+          updatedAt: Date.now(),
+        },
+      ],
+      upsertSession: async () => void 0,
+      deleteSession: async () => void 0,
+      deleteAllSessions: async () => void 0,
+      dispose: () => void 0,
+      hasSession: async () => true,
+    };
+
+    const agent = {
+      id: "auggie",
+      label: "Auggie",
+      command: "auggie",
+      args: [],
+      enabled: true,
+      mcpServers: [],
+      manualCommands: [],
+      skillPaths: [],
+    };
+
+    const logger = {
+      debug: () => void 0,
+      info: () => void 0,
+      warn: () => void 0,
+      error: () => void 0,
+    };
+
+    const manager = createAcpSessionManager(
+      sessionDb as any,
+      agent as any,
+      {} as any,
+      logger as any,
+      () => createClient() as any,
+    );
+
+    const untitledResource = MockUri.parse("acp-auggie:/untitled-1") as any;
+    const namedResource = MockUri.parse("acp-auggie:/saved-1") as any;
+
+    const liveResult = await manager.createOrGet(untitledResource);
+    const restoredResult = await manager.createOrGet(namedResource);
+
+    assert.equal(createSessionCalls, 1);
+    assert.equal(loadSessionCalls, 1);
+    assert.equal(createdClients.length, 2);
+    assert.notEqual(liveResult.session.client, restoredResult.session.client);
+    assert.equal(manager.getActive(untitledResource)?.acpSessionId, "session-1");
+    assert.equal(manager.getActive(namedResource)?.acpSessionId, "saved-1");
+
+    createdClients[1].stopEmitter.fire();
+
+    assert.equal(manager.getActive(namedResource), undefined);
+    assert.equal(manager.getActive(untitledResource)?.acpSessionId, "session-1");
+
+    manager.dispose();
+    setPermittedPathsVscodeForTesting(undefined);
+    setSessionManagerVscodeForTesting(undefined);
+  });
 });
